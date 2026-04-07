@@ -327,6 +327,24 @@ axion login --provider xai       # Save xAI key
 axion logout                     # Remove all saved keys
 ```
 
+Each provider shows its own signup URL and supported models:
+
+```
+$ axion login --provider openai
+
+Axion Code Login
+
+Provider: OpenAI (GPT)
+Models: gpt-4o, o1, o3
+
+Enter your API key:
+  Get one at: https://platform.openai.com/api-keys
+
+API key: sk-xxxxxxxx
+Key saved! (sk-xxxxxx...xxxx)
+You're ready to go! Run axion -m gpt-4o to start.
+```
+
 Keys are saved to `~/.axion/credentials/` with restricted file permissions. No environment variables needed — though env vars still work if you prefer them.
 
 ### Config File Hierarchy
