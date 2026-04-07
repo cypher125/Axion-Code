@@ -3,7 +3,7 @@
 import json
 from pathlib import Path
 
-from claw.runtime.config import ConfigLoader, RuntimeConfig
+from axion.runtime.config import ConfigLoader, RuntimeConfig
 
 
 def test_config_loader_empty(tmp_path):

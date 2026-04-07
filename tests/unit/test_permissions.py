@@ -1,6 +1,6 @@
 """Tests for permission system."""
 
-from claw.runtime.permissions import (
+from axion.runtime.permissions import (
     PermissionAllow,
     PermissionDeny,
     PermissionMode,

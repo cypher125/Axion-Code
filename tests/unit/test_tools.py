@@ -1,6 +1,6 @@
 """Tests for tool registry."""
 
-from claw.tools.registry import (
+from axion.tools.registry import (
     GlobalToolRegistry,
     get_tool_registry,
     BASH_TOOL,

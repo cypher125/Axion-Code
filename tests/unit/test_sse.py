@@ -1,7 +1,7 @@
 """Tests for SSE parser."""
 
-from claw.api.sse import SseParser, parse_frame
-from claw.api.types import (
+from axion.api.sse import SseParser, parse_frame
+from axion.api.types import (
     ContentBlockDeltaEvent,
     ContentBlockStartEvent,
     TextDelta,

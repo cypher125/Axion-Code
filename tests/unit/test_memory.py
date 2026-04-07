@@ -1,6 +1,6 @@
 """Tests for memory system."""
 
-from claw.runtime.memory import MemoryEntry, MemoryStore, MemoryType
+from axion.runtime.memory import MemoryEntry, MemoryStore, MemoryType
 
 
 def test_memory_save_and_load(tmp_path):

@@ -1,12 +1,12 @@
 """Tests for MCP tool bridge and lifecycle."""
 
-from claw.runtime.mcp.tool_bridge import (
+from axion.runtime.mcp.tool_bridge import (
     McpConnectionStatus,
     McpServerState,
     McpToolInfo,
     McpToolRegistry,
 )
-from claw.runtime.mcp.lifecycle import McpLifecycleManager
+from axion.runtime.mcp.lifecycle import McpLifecycleManager
 
 
 def test_mcp_registry_empty():

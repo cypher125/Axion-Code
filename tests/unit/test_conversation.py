@@ -2,7 +2,7 @@
 
 import pytest
 
-from claw.runtime.conversation import (
+from axion.runtime.conversation import (
     ConversationError,
     ConversationRuntime,
     MaxIterationsError,
@@ -10,7 +10,7 @@ from claw.runtime.conversation import (
     TurnSummary,
     ToolExecutor,
 )
-from claw.runtime.session import Session
+from axion.runtime.session import Session
 
 
 def test_turn_summary_defaults():

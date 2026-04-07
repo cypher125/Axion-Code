@@ -1,6 +1,6 @@
 """Tests for policy engine with condition combinators."""
 
-from claw.runtime.policy_engine import (
+from axion.runtime.policy_engine import (
     ConditionAnd,
     ConditionGreenAt,
     ConditionLaneCompleted,

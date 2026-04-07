@@ -1,6 +1,6 @@
 """Tests for terminal renderer."""
 
-from claw.cli.render import (
+from axion.cli.render import (
     MarkdownStreamState,
     Spinner,
     TerminalRenderer,

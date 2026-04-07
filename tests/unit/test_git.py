@@ -4,7 +4,7 @@ import subprocess
 
 import pytest
 
-from claw.runtime.git import (
+from axion.runtime.git import (
     GitError,
     git_branch,
     git_commit,

@@ -2,7 +2,7 @@
 
 import pytest
 
-from claw.runtime.hooks import HookConfig, HookRunner
+from axion.runtime.hooks import HookConfig, HookRunner
 
 
 @pytest.mark.asyncio

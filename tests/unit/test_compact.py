@@ -1,11 +1,11 @@
 """Tests for session compaction."""
 
-from claw.runtime.compact import (
+from axion.runtime.compact import (
     CompactionConfig,
     compact_session,
     estimate_session_tokens,
 )
-from claw.runtime.session import Session
+from axion.runtime.session import Session
 
 
 def test_estimate_tokens_empty():

@@ -1,6 +1,6 @@
 """Tests for OAuth flow."""
 
-from claw.runtime.oauth import (
+from axion.runtime.oauth import (
     PkceCodePair,
     generate_pkce_pair,
     generate_state,

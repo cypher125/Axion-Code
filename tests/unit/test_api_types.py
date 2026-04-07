@@ -1,6 +1,6 @@
 """Tests for API types."""
 
-from claw.api.types import (
+from axion.api.types import (
     ContentBlockDeltaEvent,
     ContentBlockStartEvent,
     InputMessage,

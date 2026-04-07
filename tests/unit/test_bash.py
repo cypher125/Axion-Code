@@ -2,7 +2,7 @@
 
 import pytest
 
-from claw.runtime.bash import (
+from axion.runtime.bash import (
     BashCommandInput,
     BashCommandOutput,
     execute_bash,

@@ -1,52 +1,47 @@
 # Axion-Code
 
-A Python CLI agent harness — a full port of [Claw Code](https://github.com/anthropics/claw-code) (Rust) which itself is a clone of Claude Code.
-
-## What is this?
-
-Axion-Code is an autonomous AI coding assistant that runs in your terminal. It connects to Anthropic's Claude API (or OpenAI-compatible APIs) and can read files, write code, execute commands, and manage complex software engineering tasks.
+An autonomous AI coding assistant that runs in your terminal. Connects to Anthropic's Claude API (or OpenAI-compatible APIs) to read files, write code, execute commands, and manage complex software engineering tasks.
 
 ## Quick Start
 
 ```bash
 # Install
-cd python
 pip install -e ".[dev]"
 
 # Set your API key
 export ANTHROPIC_API_KEY=sk-ant-...
 
 # Interactive REPL
-claw
+axion
 
 # One-shot prompt
-claw -p "Explain this codebase"
+axion -p "Explain this codebase"
 
 # Health check
-claw doctor
+axion doctor
 ```
 
 ## Architecture
 
-9 packages mirroring the original Rust crate structure:
+9 packages:
 
 | Package | Purpose |
 |---|---|
-| `claw/api/` | Anthropic + OpenAI API clients with SSE streaming |
-| `claw/runtime/` | Core engine — sessions, conversation loop, permissions, hooks, MCP, OAuth |
-| `claw/cli/` | Terminal UI — REPL, markdown rendering, spinner, input completion |
-| `claw/tools/` | Tool registry and execution (Bash, Read, Write, Edit, Glob, Grep) |
-| `claw/commands/` | 60+ slash commands with fuzzy suggestions |
-| `claw/plugins/` | Plugin system with manifest validation and lifecycle |
-| `claw/telemetry/` | Session tracing and analytics |
-| `claw/compat_harness/` | Upstream TypeScript manifest extraction |
-| `tests/` | 116 unit tests + mock Anthropic server |
+| `axion/api/` | Anthropic + OpenAI API clients with SSE streaming |
+| `axion/runtime/` | Core engine — sessions, conversation loop, permissions, hooks, MCP, OAuth |
+| `axion/cli/` | Terminal UI — REPL, markdown rendering, spinner, input completion |
+| `axion/tools/` | Tool registry and execution (Bash, Read, Write, Edit, Glob, Grep, WebSearch, WebFetch) |
+| `axion/commands/` | 60+ slash commands with fuzzy suggestions |
+| `axion/plugins/` | Plugin system with manifest validation and lifecycle |
+| `axion/telemetry/` | Session tracing and analytics |
+| `axion/compat_harness/` | Upstream manifest extraction |
+| `tests/` | 148 unit tests + mock Anthropic server |
 
 ## Stats
 
-- **87 Python files**
-- **14,403 lines of code**
-- **116 tests** (all passing)
+- **95 Python files**
+- **16,000+ lines of code**
+- **148 tests** (all passing)
 - Python 3.11+ required
 
 ## Key Features
@@ -54,17 +49,27 @@ claw doctor
 - Anthropic Claude + OpenAI/xAI provider support
 - SSE streaming with markdown rendering
 - Interactive REPL with slash commands and tab completion
-- Tool system: Bash, Read, Write, Edit, Glob, Grep, WebSearch, WebFetch
+- Full tool system: Bash, Read, Write, Edit, Glob, Grep, WebSearch, WebFetch, Agent, TodoWrite, NotebookEdit, Skill
+- System prompt with CLAUDE.md ancestor walking (41K chars)
 - 3-layer config merge (user → project → local)
-- Permission system (read-only / workspace-write / full-access)
+- Permission system with persistence (read-only / workspace-write / full-access)
 - Hook system (pre/post tool execution)
 - Plugin lifecycle (install/enable/disable/uninstall)
-- MCP server management (JSON-RPC over stdio)
-- OAuth PKCE flow with browser launch
+- MCP server management (JSON-RPC over stdio, 6 transport types)
+- OAuth PKCE flow with browser launch and token refresh
 - Session persistence and resume
-- Token usage tracking and cost estimation
+- Token preflight check and prompt caching
+- Persistent memory system (user/feedback/project/reference)
+- Git workflows (status, log, commit, branch, stash)
+- Skill execution from .md files with YAML frontmatter
+- Model-based intelligent session compaction
 - LSP client integration
-- Worker state machine and task registry
+- Worker state machine and task registry with team/cron scheduling
+- Policy engine with condition combinators
+
+## Author
+
+**Cyrus** — osawayecyrus@gmail.com
 
 ## License
 

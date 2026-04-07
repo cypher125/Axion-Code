@@ -3,7 +3,7 @@
 import json
 from pathlib import Path
 
-from claw.runtime.session import (
+from axion.runtime.session import (
     ContentBlock,
     ConversationMessage,
     MessageRole,
@@ -12,7 +12,7 @@ from claw.runtime.session import (
     ToolResultBlock,
     ToolUseBlock,
 )
-from claw.runtime.usage import TokenUsage
+from axion.runtime.usage import TokenUsage
 
 
 def test_session_create():

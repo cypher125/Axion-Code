@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from claw.runtime.prompt import (
+from axion.runtime.prompt import (
     ProjectContext,
     SystemPromptBuilder,
     SYSTEM_PROMPT_DYNAMIC_BOUNDARY,

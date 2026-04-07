@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from claw.runtime.skills import SkillDefinition, execute_skill, load_skill, resolve_skill
+from axion.runtime.skills import SkillDefinition, execute_skill, load_skill, resolve_skill
 
 
 def test_load_skill_with_frontmatter(tmp_path):

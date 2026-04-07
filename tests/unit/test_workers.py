@@ -1,6 +1,6 @@
 """Tests for worker state machine."""
 
-from claw.runtime.workers import (
+from axion.runtime.workers import (
     Worker,
     WorkerFailureKind,
     WorkerPromptTarget,

@@ -1,12 +1,12 @@
 """Tests for command parsing."""
 
-from claw.commands.parsing import (
+from axion.commands.parsing import (
     CommandParseError,
     ParsedCommand,
     parse_slash_command,
     render_help,
 )
-from claw.commands.registry import CommandRegistry
+from axion.commands.registry import CommandRegistry
 
 
 def test_parse_help():
