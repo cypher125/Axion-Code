@@ -414,7 +414,7 @@ class BuiltinToolExecutor:
             file_path=params["file_path"],
             content=params["content"],
         )
-        action = "Created" if result.created else "Updated"
+        action = "Created" if result.kind == "create" else "Updated"
         return f"{action} {result.file_path}"
 
     @staticmethod
