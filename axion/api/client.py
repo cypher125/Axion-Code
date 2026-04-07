@@ -20,6 +20,10 @@ MODEL_ALIASES: dict[str, str] = {
     "sonnet": "claude-sonnet-4-6",
     "haiku": "claude-haiku-4-5-20251213",
     "local": "llama3.1",
+    # Claude Code format aliases (e.g. "opus[1m]", "sonnet[1m]")
+    "opus[1m]": "claude-opus-4-6",
+    "sonnet[1m]": "claude-sonnet-4-6",
+    "haiku[1m]": "claude-haiku-4-5-20251213",
 }
 
 
@@ -31,8 +35,23 @@ class ProviderKind(enum.Enum):
 
 
 def resolve_model_alias(model: str) -> str:
-    """Resolve short model aliases to full model IDs."""
-    return MODEL_ALIASES.get(model.lower(), model)
+    """Resolve short model aliases to full model IDs.
+
+    Handles Claude Code format like "opus[1m]", "sonnet[1m]".
+    """
+    lower = model.lower().strip()
+
+    # Direct match
+    if lower in MODEL_ALIASES:
+        return MODEL_ALIASES[lower]
+
+    # Strip [context] suffix (e.g. "opus[1m]" -> "opus")
+    import re
+    stripped = re.sub(r"\[.*?\]$", "", lower).strip()
+    if stripped in MODEL_ALIASES:
+        return MODEL_ALIASES[stripped]
+
+    return model
 
 
 def detect_provider_kind(model: str) -> ProviderKind:
