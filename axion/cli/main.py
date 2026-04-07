@@ -678,6 +678,10 @@ async def _handle_slash_command(
     if cmd == "session":
         return _handle_session_command(args, session)
 
+    # --- Plan mode ---
+    if cmd == "plan":
+        return _handle_plan_command(args, runtime, session)
+
     return f"Command /{cmd} recognized but has no handler yet."
 
 
@@ -839,6 +843,78 @@ def _handle_resume_in_repl(args: str, session: Session, runtime: ConversationRun
         f"Resumed session {session.session_id} "
         f"({session.message_count()} messages, "
         f"{runtime.usage_tracker.turn_count} turns)"
+    )
+
+
+def _handle_plan_command(args: str, runtime: ConversationRuntime, session: Session) -> str:
+    """Handle /plan [task] | /plan execute | /plan exit."""
+    from axion.runtime.plan_mode import PLAN_MODE_SYSTEM_PROMPT
+
+    subcommand = args.strip().lower().split()[0] if args.strip() else ""
+    task = args.strip()
+
+    # /plan exit — leave plan mode
+    if subcommand in ("exit", "cancel", "stop"):
+        if not runtime.plan_mode_active:
+            return "Not in plan mode."
+        runtime.plan_mode_active = False
+        # Remove the plan mode prompt addition
+        if PLAN_MODE_SYSTEM_PROMPT in runtime.system_prompt:
+            runtime.system_prompt = runtime.system_prompt.replace(PLAN_MODE_SYSTEM_PROMPT, "")
+        return "Exited plan mode. Write tools are now available."
+
+    # /plan execute — approve plan and exit plan mode
+    if subcommand in ("execute", "run", "go", "approve", "yes"):
+        if not runtime.plan_mode_active:
+            return "Not in plan mode. Use /plan <task> to enter plan mode first."
+        runtime.plan_mode_active = False
+        if PLAN_MODE_SYSTEM_PROMPT in runtime.system_prompt:
+            runtime.system_prompt = runtime.system_prompt.replace(PLAN_MODE_SYSTEM_PROMPT, "")
+        return (
+            "Plan approved! Exiting plan mode.\n"
+            "Write tools are now available. Send your next message to start implementing."
+        )
+
+    # /plan status — check if in plan mode
+    if subcommand == "status":
+        if runtime.plan_mode_active:
+            return "Plan mode: ACTIVE (read-only tools only)"
+        return "Plan mode: inactive"
+
+    # /plan (no args) — show help
+    if not task:
+        if runtime.plan_mode_active:
+            return (
+                "Plan mode is ACTIVE.\n"
+                "  /plan exit    — Leave plan mode\n"
+                "  /plan execute — Approve plan and start implementing\n"
+                "  /plan status  — Check plan mode status"
+            )
+        return (
+            "Usage: /plan <task description>\n"
+            "  Enter plan mode where the AI explores and designs before coding.\n"
+            "  Only read-only tools (Read, Glob, Grep, WebSearch) are allowed.\n\n"
+            "  Example: /plan Add user authentication with JWT tokens\n\n"
+            "  Subcommands:\n"
+            "    /plan execute — Approve plan and start implementing\n"
+            "    /plan exit    — Cancel and leave plan mode"
+        )
+
+    # /plan <task> — enter plan mode with a task
+    if runtime.plan_mode_active:
+        return "Already in plan mode. Use /plan exit first, or send your task as a message."
+
+    runtime.plan_mode_active = True
+    # Augment the system prompt with plan mode instructions
+    runtime.system_prompt += PLAN_MODE_SYSTEM_PROMPT
+
+    return (
+        "📋 Plan mode ACTIVE\n"
+        "  Only read-only tools allowed (Read, Glob, Grep, WebSearch).\n"
+        "  Write/Edit/Bash are blocked until you approve.\n\n"
+        f"  Task: {task}\n\n"
+        "  Send your next message to start planning, or just say 'go'.\n"
+        "  When done: /plan execute to approve, /plan exit to cancel."
     )
 
 
@@ -1166,7 +1242,8 @@ async def run_repl(
         while True:
             # Read input
             try:
-                user_input = await prompt_session.prompt_async("axion> ")
+                prompt_text = "axion[plan]> " if runtime.plan_mode_active else "axion> "
+                user_input = await prompt_session.prompt_async(prompt_text)
             except (EOFError, KeyboardInterrupt):
                 console.print("\n[dim]Goodbye![/dim]")
                 break

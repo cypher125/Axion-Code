@@ -130,6 +130,9 @@ All tools are automatically sent to the model with every request, so the AI can 
 /login         Authenticate via OAuth
 /memory        View persistent memory entries
 /diff          Show git changes with syntax highlighting
+/plan <task>   Enter plan mode (read-only exploration + design)
+/plan execute  Approve plan and start implementing
+/plan exit     Cancel plan mode
 ```
 
 ### Real-Time Tool Display
@@ -251,6 +254,45 @@ axion --budget 1.00
 ```
 
 Budgets are checked after every API call. Use `/cost` anytime to see your running total.
+
+### Plan Mode
+
+Design before coding. Plan mode blocks all write tools and lets the AI explore first:
+
+```
+axion> /plan Add JWT authentication to the API
+
+📋 Plan mode ACTIVE
+  Only read-only tools allowed (Read, Glob, Grep, WebSearch).
+  Write/Edit/Bash are blocked until you approve.
+
+  Task: Add JWT authentication to the API
+
+axion[plan]> go ahead, explore the codebase and design a plan
+
+[AI reads files, searches code, explores architecture...]
+
+## Plan: Add JWT Authentication
+1. Create auth/ module with token generation
+2. Add middleware to validate tokens on protected routes
+3. Create login endpoint
+4. Add tests
+
+### Files to modify:
+- src/main.py
+- src/models.py
+
+Ready to implement. Type /plan execute to proceed.
+
+axion[plan]> /plan execute
+
+Plan approved! Exiting plan mode.
+Write tools are now available. Send your next message to start implementing.
+
+axion> implement the plan
+```
+
+The prompt changes to `axion[plan]>` so you always know when plan mode is active.
 
 ### Conversation Export
 

@@ -250,6 +250,7 @@ class ConversationRuntime:
     on_tool_result: Callable[[str, str, bool], None] | None = None  # (tool_name, output, is_error)
     on_thinking: Callable[[str], None] | None = None  # (thinking_text)
     cost_budget_usd: float | None = None  # Max spend per session (None = unlimited)
+    plan_mode_active: bool = False  # When True, only read-only tools allowed
 
     # -- Builder helpers -----------------------------------------------------
 
@@ -696,6 +697,18 @@ class ConversationRuntime:
                     "outcome": "permission_denied",
                 })
                 continue
+
+            # ---- Plan mode check: block write tools ----
+            if self.plan_mode_active:
+                from axion.runtime.plan_mode import get_plan_mode_denial_message, is_tool_allowed_in_plan_mode
+                if not is_tool_allowed_in_plan_mode(tool_name):
+                    result_msg = self._make_tool_result(
+                        tool_id, tool_name,
+                        get_plan_mode_denial_message(tool_name),
+                        is_error=True,
+                    )
+                    results.append(result_msg)
+                    continue
 
             # ---- Phase 3: Execute tool ----
             # Notify caller that tool is about to execute
