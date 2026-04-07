@@ -34,6 +34,15 @@ axion -p "Find and fix the bug in auth.py"
 # Use a specific model
 axion -m opus
 
+# Set a cost budget
+axion --budget 1.00
+
+# Permission mode (asks before dangerous ops)
+axion --permission-mode prompt
+
+# Resume last session
+axion --resume latest
+
 # Health check
 axion doctor
 ```
@@ -72,7 +81,7 @@ axion models
 | Tool | What it does |
 |---|---|
 | **Bash** | Execute shell commands with timeout, background mode, sandboxing |
-| **Read** | Read files with line ranges, binary detection, size limits |
+| **Read** | Read files with line ranges, binary detection, image/PDF support |
 | **Write** | Create or update files with automatic patch generation |
 | **Edit** | Find-and-replace in files with uniqueness validation |
 | **Glob** | Search for files by pattern, sorted by modification time |
@@ -107,7 +116,7 @@ All tools are automatically sent to the model with every request, so the AI can 
 /resume latest Resume last session
 /login         Authenticate via OAuth
 /memory        View persistent memory entries
-/diff          Show current git changes
+/diff          Show git changes with syntax highlighting
 ```
 
 ### Real-Time Tool Display
@@ -185,6 +194,45 @@ System prompts are automatically cached using Anthropic's prompt caching API (`c
 ### Token Preflight Check
 
 Before every API call, Axion estimates the token count and checks it against the model's context window (200K for Claude). If the request would exceed the limit, it raises a clear error before wasting an API call.
+
+### Extended Thinking Display
+
+When using Claude Opus with extended thinking, Axion shows a collapsed thinking indicator instead of dumping raw thinking text:
+
+```
+💭 Thinking...
+```
+
+The thinking content is captured internally but kept out of the output to keep responses clean.
+
+### Image & PDF Reading
+
+The Read tool automatically detects file types:
+- **Images** (`.png`, `.jpg`, `.gif`, `.webp`, `.svg`): Returns base64-encoded content with metadata for the model to interpret
+- **PDFs**: Tries `pdftotext` for text extraction, falls back to metadata if unavailable
+
+### Syntax-Highlighted Diffs
+
+The `/diff` command renders git changes with full syntax highlighting using the monokai theme, showing staged and unstaged changes separately:
+
+```bash
+/diff    # Shows colorized diff in the terminal
+```
+
+### Cost Budget Limits
+
+Set a maximum spend per session to avoid surprise bills:
+
+```bash
+# Limit session to $1.00
+axion --budget 1.00
+
+# The AI will stop when the budget is reached
+# Cost budget exceeded: $1.0234 >= $1.0000 budget.
+# Use /cost to see breakdown or increase the budget.
+```
+
+Budgets are checked after every API call. Use `/cost` anytime to see your running total.
 
 ## Architecture
 
@@ -349,7 +397,7 @@ GitHub Actions runs on every push and PR:
 | Metric | Value |
 |---|---|
 | Python files | 100 |
-| Lines of code | 17,653 |
+| Lines of code | 17,750 |
 | Unit tests | 156 |
 | Integration tests | 7 (mock server) |
 | Providers | 4 (Anthropic, OpenAI, xAI, Ollama) |
