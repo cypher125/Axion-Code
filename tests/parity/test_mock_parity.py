@@ -11,15 +11,14 @@ import pytest
 from axion.api.anthropic import AnthropicClient, AuthCredentials
 from axion.api.types import (
     ContentBlockDeltaEvent,
-    ContentBlockStartEvent,
+    InputMessage,
+    MessageRequest,
     MessageResponse,
     MessageStartEvent,
     MessageStopEvent,
     StreamEvent,
     TextDelta,
     TextOutputBlock,
-    InputMessage,
-    MessageRequest,
 )
 from tests.mock_anthropic.server import MockAnthropicService
 

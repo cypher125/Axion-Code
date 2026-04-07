@@ -6,14 +6,12 @@ Maps to: rust/crates/api/src/client.rs
 from __future__ import annotations
 
 import enum
-from dataclasses import dataclass
 from typing import AsyncIterator
 
 from axion.api.anthropic import AnthropicClient, AuthCredentials
-from axion.api.error import ApiError, MissingCredentialsError
+from axion.api.error import ApiError
 from axion.api.openai_compat import OpenAiCompatClient, OpenAiCompatConfig
 from axion.api.types import MessageRequest, MessageResponse, StreamEvent
-
 
 # Model alias resolution
 MODEL_ALIASES: dict[str, str] = {

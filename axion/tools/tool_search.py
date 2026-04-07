@@ -14,12 +14,10 @@ Usage by the model:
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, field
 from typing import Any
 
 from axion.tools.registry import GlobalToolRegistry, ToolSpec, get_tool_registry
-
 
 # ---------------------------------------------------------------------------
 # Types

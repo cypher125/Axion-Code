@@ -5,12 +5,10 @@ Maps to: rust/crates/commands/src/lib.rs (parsing, SlashCommand enum)
 
 from __future__ import annotations
 
-import enum
 from dataclasses import dataclass, field
 from typing import Any
 
 from axion.commands.registry import CommandRegistry, SlashCommandSpec, get_command_registry
-
 
 # ---------------------------------------------------------------------------
 # Parsed command variants

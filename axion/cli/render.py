@@ -6,23 +6,18 @@ Maps to: rust/crates/rusty-claude-cli/src/render.rs
 from __future__ import annotations
 
 import enum
-import io
 import json
-import re
 import sys
-import time
 import threading
-from dataclasses import dataclass, field
+import time
 from typing import Any, TextIO
 
 from rich.console import Console
 from rich.markdown import Markdown
-from rich.syntax import Syntax
-from rich.text import Text
-from rich.theme import Theme
 from rich.panel import Panel
+from rich.syntax import Syntax
 from rich.table import Table
-
+from rich.theme import Theme
 
 # ---------------------------------------------------------------------------
 # Constants (matching Rust render.rs)

@@ -5,14 +5,12 @@ Maps to: rust/crates/plugins/src/lib.rs (PluginManager, PluginRegistry)
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import shutil
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
 
 from axion.plugins.manifest import (
     ManifestValidationError,

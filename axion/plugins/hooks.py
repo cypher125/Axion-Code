@@ -5,8 +5,8 @@ Maps to: rust/crates/plugins/src/hooks.rs
 
 from __future__ import annotations
 
-from axion.runtime.hooks import HookConfig, HookRunner
 from axion.plugins.manager import PluginRegistry
+from axion.runtime.hooks import HookConfig, HookRunner
 
 
 def hook_runner_from_registry(registry: PluginRegistry) -> HookRunner:

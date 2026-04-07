@@ -1,7 +1,6 @@
 """Tests for configuration system."""
 
 import json
-from pathlib import Path
 
 from axion.runtime.config import ConfigLoader, RuntimeConfig
 

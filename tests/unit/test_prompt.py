@@ -3,9 +3,9 @@
 from pathlib import Path
 
 from axion.runtime.prompt import (
+    SYSTEM_PROMPT_DYNAMIC_BOUNDARY,
     ProjectContext,
     SystemPromptBuilder,
-    SYSTEM_PROMPT_DYNAMIC_BOUNDARY,
     discover_instruction_files,
 )
 

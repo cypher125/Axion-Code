@@ -3,11 +3,10 @@
 import pytest
 
 from axion.runtime.bash import (
+    MAX_OUTPUT_BYTES,
     BashCommandInput,
-    BashCommandOutput,
     execute_bash,
     truncate_output,
-    MAX_OUTPUT_BYTES,
 )
 
 

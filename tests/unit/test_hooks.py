@@ -2,7 +2,7 @@
 
 import pytest
 
-from axion.runtime.hooks import HookConfig, HookRunner
+from axion.runtime.hooks import HookRunner
 
 
 @pytest.mark.asyncio

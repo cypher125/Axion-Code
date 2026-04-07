@@ -1,11 +1,11 @@
 """Tests for ToolSearch - deferred tool schema loading."""
 
+from axion.tools.registry import GlobalToolRegistry
 from axion.tools.tool_search import (
     DeferredToolRegistry,
     ToolSearchOutput,
     tool_search,
 )
-from axion.tools.registry import GlobalToolRegistry
 
 
 def test_search_by_keyword():

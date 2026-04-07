@@ -10,7 +10,6 @@ import enum
 import json
 import logging
 import os
-import time
 from dataclasses import dataclass, field
 from typing import AsyncIterator
 
@@ -19,13 +18,9 @@ import httpx
 from axion.api.error import (
     ApiError,
     ApiResponseError,
-    AuthError,
-    BackoffOverflowError,
-    ExpiredOAuthTokenError,
     HttpError,
     MissingCredentialsError,
     RetriesExhaustedError,
-    looks_like_context_window_error,
 )
 from axion.api.prompt_cache import PromptCache
 from axion.api.sse import SseParser

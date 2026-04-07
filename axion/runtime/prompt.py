@@ -21,13 +21,11 @@ Maps to: rust/crates/runtime/src/prompt.rs (803 lines)
 from __future__ import annotations
 
 import hashlib
-import os
 import platform
 import subprocess
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
-from typing import Any
 
 from axion.runtime.config import ConfigLoader, RuntimeConfig
 

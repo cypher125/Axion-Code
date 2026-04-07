@@ -5,9 +5,6 @@ Maps to: rust/crates/api/src/error.rs
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-
-
 CONTEXT_WINDOW_ERROR_MARKERS = [
     "maximum context length",
     "context window",

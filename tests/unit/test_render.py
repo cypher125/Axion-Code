@@ -1,13 +1,13 @@
 """Tests for terminal renderer."""
 
+from rich.console import Console
+
 from axion.cli.render import (
     MarkdownStreamState,
-    Spinner,
     TerminalRenderer,
     format_tool_call_start,
     format_tool_result,
 )
-from rich.console import Console
 
 
 def test_format_tool_call_bash():

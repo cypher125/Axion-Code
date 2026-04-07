@@ -5,9 +5,8 @@ Maps to: rust/crates/runtime/src/mcp_lifecycle_hardened.rs
 
 from __future__ import annotations
 
-import asyncio
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 from axion.runtime.mcp.tool_bridge import McpConnectionStatus, McpServerState, McpToolRegistry

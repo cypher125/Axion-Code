@@ -1,15 +1,11 @@
 """Tests for session persistence."""
 
-import json
-from pathlib import Path
 
 from axion.runtime.session import (
-    ContentBlock,
     ConversationMessage,
     MessageRole,
     Session,
     TextBlock,
-    ToolResultBlock,
     ToolUseBlock,
 )
 from axion.runtime.usage import TokenUsage

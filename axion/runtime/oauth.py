@@ -5,7 +5,6 @@ Maps to: rust/crates/runtime/src/oauth.rs
 
 from __future__ import annotations
 
-import asyncio
 import base64
 import hashlib
 import http.server
@@ -15,7 +14,6 @@ import os
 import platform
 import secrets
 import subprocess
-import sys
 import threading
 import time
 import urllib.parse

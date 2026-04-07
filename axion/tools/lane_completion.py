@@ -6,7 +6,6 @@ Maps to: rust/crates/tools/src/lane_completion.rs
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
 
 
 @dataclass

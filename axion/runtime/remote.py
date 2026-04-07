@@ -6,7 +6,6 @@ Maps to: rust/crates/runtime/src/remote.rs
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
 
 
 @dataclass

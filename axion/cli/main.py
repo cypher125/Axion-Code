@@ -21,7 +21,6 @@ import asyncio
 import json
 import logging
 import os
-import signal
 import subprocess
 import sys
 import time
@@ -32,28 +31,23 @@ from typing import Any
 import click
 from rich.console import Console
 from rich.markdown import Markdown
-from rich.panel import Panel
-from rich.text import Text
 
 from axion import __version__
 from axion.api.client import (
     ProviderClient,
-    max_tokens_for_model,
     resolve_model_alias,
 )
 from axion.cli.render import CLAW_THEME, TerminalRenderer
+from axion.commands.handlers.agents import handle_agents_command
+from axion.commands.handlers.mcp import handle_mcp_command
+from axion.commands.handlers.plugins import handle_plugins_command
+from axion.commands.handlers.skills import handle_skills_command
 from axion.commands.parsing import (
     CommandParseError,
     ParsedCommand,
     parse_slash_command,
     render_help,
-    suggest_commands,
 )
-from axion.commands.registry import get_command_registry
-from axion.commands.handlers.agents import handle_agents_command
-from axion.commands.handlers.mcp import handle_mcp_command
-from axion.commands.handlers.plugins import handle_plugins_command
-from axion.commands.handlers.skills import handle_skills_command
 from axion.plugins.manager import PluginManager
 from axion.runtime.compact import (
     CompactionConfig,
@@ -71,18 +65,13 @@ from axion.runtime.oauth import (
     save_oauth_credentials,
 )
 from axion.runtime.permissions import (
-    PermissionAllow,
-    PermissionDeny,
     PermissionMode,
     PermissionPolicy,
     PermissionPromptDecision,
-    PermissionRequest,
 )
 from axion.runtime.prompt import SystemPromptBuilder
 from axion.runtime.sandbox import detect_sandbox
 from axion.runtime.session import (
-    ConversationMessage,
-    MessageRole,
     Session,
     TextBlock,
     ToolResultBlock,
@@ -191,7 +180,7 @@ def _git_status_short() -> str | None:
 
 def _prompt_permission(tool_name: str, tool_input: str) -> PermissionPromptDecision:
     """Interactive y/N prompt when a tool needs elevated permissions."""
-    console.print(f"\n[bold yellow]Permission required[/bold yellow]")
+    console.print("\n[bold yellow]Permission required[/bold yellow]")
     console.print(f"  Tool: [bold]{tool_name}[/bold]")
     if tool_input:
         display = tool_input[:300] + "..." if len(tool_input) > 300 else tool_input
@@ -223,7 +212,7 @@ def _render_tool_use(tool_name: str, tool_input: str) -> None:
                 val_str = val_str[:200] + "..."
             console.print(f"[dim]\u2502  {key}: {val_str}[/dim]")
 
-    console.print(f"[dim]\u2570\u2500[/dim]")
+    console.print("[dim]\u2570\u2500[/dim]")
 
 
 def _render_tool_result(tool_name: str, output: str, is_error: bool) -> None:
@@ -298,36 +287,36 @@ def _create_plugin_manager() -> PluginManager:
 def _export_transcript(session: Session, output_path: Path) -> None:
     """Export a session transcript to a markdown file."""
     lines: list[str] = []
-    lines.append(f"# Axion Code Session Transcript")
-    lines.append(f"")
+    lines.append("# Axion Code Session Transcript")
+    lines.append("")
     lines.append(f"- Session ID: {session.session_id}")
     lines.append(f"- Created: {datetime.fromtimestamp(session.created_at_ms / 1000).isoformat()}")
     lines.append(f"- Messages: {session.message_count()}")
-    lines.append(f"")
-    lines.append(f"---")
-    lines.append(f"")
+    lines.append("")
+    lines.append("---")
+    lines.append("")
 
     for msg in session.messages:
         role_label = msg.role.value.upper()
         lines.append(f"## {role_label}")
-        lines.append(f"")
+        lines.append("")
         for block in msg.blocks:
             if isinstance(block, TextBlock):
                 lines.append(block.text)
             elif isinstance(block, ToolUseBlock):
                 lines.append(f"**Tool Use: {block.name}**")
-                lines.append(f"```json")
+                lines.append("```json")
                 lines.append(block.input)
-                lines.append(f"```")
+                lines.append("```")
             elif isinstance(block, ToolResultBlock):
                 status = "Error" if block.is_error else "Result"
                 lines.append(f"**Tool {status}: {block.tool_name}**")
-                lines.append(f"```")
+                lines.append("```")
                 lines.append(block.output[:2000])
                 if len(block.output) > 2000:
                     lines.append("... (truncated)")
-                lines.append(f"```")
-        lines.append(f"")
+                lines.append("```")
+        lines.append("")
 
     output_path.write_text("\n".join(lines), encoding="utf-8")
 
@@ -863,7 +852,7 @@ def _run_doctor_checks() -> str:
         expired_str = " (expired)" if oauth_creds.is_expired() else " (valid)"
         lines.append(f"  OAuth credentials: FOUND{expired_str}")
     else:
-        lines.append(f"  OAuth credentials: NOT FOUND")
+        lines.append("  OAuth credentials: NOT FOUND")
 
     # Dependencies
     deps = ["httpx", "rich", "click", "prompt_toolkit"]
@@ -882,9 +871,9 @@ def _run_doctor_checks() -> str:
         if result.returncode == 0:
             lines.append(f"  git: {result.stdout.strip()}")
         else:
-            lines.append(f"  git: NOT FOUND")
+            lines.append("  git: NOT FOUND")
     except (subprocess.SubprocessError, FileNotFoundError):
-        lines.append(f"  git: NOT FOUND")
+        lines.append("  git: NOT FOUND")
 
     # Sandbox
     sandbox = detect_sandbox()
@@ -978,7 +967,7 @@ async def run_repl(
         history=FileHistory(str(history_path))
     )
 
-    turn_interrupted = False
+    _turn_interrupted = False
 
     try:
         while True:
@@ -1013,7 +1002,7 @@ async def run_repl(
 
             # Send to model
             text_buffer.clear()
-            turn_interrupted = False
+            _turn_interrupted = False
 
             try:
                 if output_format != "json":
@@ -1049,7 +1038,7 @@ async def run_repl(
                         )
 
             except KeyboardInterrupt:
-                turn_interrupted = True
+                _turn_interrupted = True
                 console.print("\n[yellow]Interrupted[/yellow]")
             except Exception as exc:
                 if output_format == "json":
@@ -1119,7 +1108,7 @@ async def _run_login(provider_name: str = "anthropic") -> int:
         f"&scope={scopes_str}"
     )
 
-    console.print(f"Open this URL in your browser:\n")
+    console.print("Open this URL in your browser:\n")
     console.print(f"[link={auth_url}]{auth_url}[/link]\n")
     console.print(f"Waiting for callback on port {callback_port}...")
 
@@ -1530,7 +1519,7 @@ def session_cmd(action: str, args: tuple[str, ...]) -> None:
                 console.print(f"  Forked from: {session.fork.parent_session_id}")
 
             # Show message summary
-            console.print(f"\n[bold]Messages:[/bold]")
+            console.print("\n[bold]Messages:[/bold]")
             for i, msg in enumerate(session.messages):
                 role = msg.role.value.upper()
                 block_types = [type(b).__name__ for b in msg.blocks]

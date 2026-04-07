@@ -14,7 +14,7 @@ import json
 import logging
 import os
 from collections import OrderedDict
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, AsyncIterator
 
 import httpx
@@ -32,7 +32,6 @@ from axion.api.types import (
     ContentBlockDeltaEvent,
     ContentBlockStartEvent,
     ContentBlockStopEvent,
-    InputContentBlock,
     InputJsonDelta,
     InputMessage,
     MessageDelta,
@@ -186,7 +185,6 @@ class OpenAiCompatClient:
             stream=True,
         )
         response = await self._send_with_retry(req)
-        request_id = _request_id_from_headers(response.headers)
 
         parser = OpenAiSseParser()
         state = _StreamState(model=req.model)

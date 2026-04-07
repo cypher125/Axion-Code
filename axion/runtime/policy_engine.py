@@ -6,9 +6,7 @@ Maps to: rust/crates/runtime/src/policy_engine.rs
 from __future__ import annotations
 
 import enum
-import time
 from dataclasses import dataclass, field
-from typing import Any
 
 GreenLevel = int  # 0-255
 

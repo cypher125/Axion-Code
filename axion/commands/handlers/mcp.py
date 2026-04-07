@@ -5,8 +5,6 @@ Maps to: rust/crates/commands/src/lib.rs (handle_mcp_slash_command)
 
 from __future__ import annotations
 
-from typing import Any
-
 from axion.runtime.mcp.tool_bridge import McpToolRegistry
 
 

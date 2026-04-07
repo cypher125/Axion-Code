@@ -12,7 +12,6 @@ import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
 
 # Limits matching Rust
 MAX_READ_SIZE = 10 * 1024 * 1024  # 10 MiB

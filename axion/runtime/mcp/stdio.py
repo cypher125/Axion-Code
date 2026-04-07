@@ -8,7 +8,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -136,7 +135,7 @@ class McpServerConnection:
         self._read_task = asyncio.create_task(self._read_loop())
 
         # Initialize
-        result = await self._send_request("initialize", {
+        _init_result = await self._send_request("initialize", {
             "protocolVersion": MCP_PROTOCOL_VERSION,
             "capabilities": {},
             "clientInfo": {"name": "axion-code", "version": "0.1.0"},

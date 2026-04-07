@@ -5,7 +5,6 @@ Maps to: rust/crates/commands/src/lib.rs (handle_agents_slash_command)
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
 from pathlib import Path
 

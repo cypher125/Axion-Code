@@ -6,12 +6,9 @@ Maps to: rust/crates/runtime/src/lane_events.rs, branch_lock.rs, stale_branch.rs
 from __future__ import annotations
 
 import enum
-import hashlib
-import json
 import time
 from dataclasses import dataclass, field
 from typing import Any
-
 
 # ---------------------------------------------------------------------------
 # Lane status and events
@@ -138,7 +135,7 @@ class LaneEventLog:
         return list(self._lanes.values())
 
     def active_lanes(self) -> list[LaneState]:
-        return [l for l in self._lanes.values() if l.status == LaneStatus.ACTIVE]
+        return [lane for lane in self._lanes.values() if lane.status == LaneStatus.ACTIVE]
 
 
 # ---------------------------------------------------------------------------

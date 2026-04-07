@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 import logging
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 from axion.runtime.bash import BashCommandInput, execute_bash
@@ -313,11 +313,11 @@ class BuiltinToolExecutor:
         except json.JSONDecodeError:
             params = {}
 
-        is_error = False
+        _is_error = False
         try:
             result = await self._dispatch(tool_name, params)
         except Exception as exc:
-            is_error = True
+            _is_error = True
             result = f"Tool error: {exc}"
             # --- Post-tool-use failure hook ---
             if self.hook_runner is not None:
@@ -511,8 +511,9 @@ class BuiltinToolExecutor:
     @staticmethod
     async def _exec_web_search(params: dict[str, Any]) -> str:
         """Search the web using DuckDuckGo."""
-        import httpx
         import re
+
+        import httpx
 
         query = params.get("query", "")
         if not query:
@@ -738,6 +739,7 @@ class BuiltinToolExecutor:
     def _exec_skill(self, params: dict[str, Any]) -> str:
         """Load and execute a skill by name or path."""
         from pathlib import Path
+
         from axion.runtime.skills import execute_skill, load_skill, resolve_skill
 
         skill_name = params.get("skill", params.get("name", ""))

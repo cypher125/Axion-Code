@@ -6,7 +6,6 @@ Maps to: rust/crates/commands/src/lib.rs (handle_plugins_slash_command)
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 
 from axion.plugins.manager import PluginManager
 

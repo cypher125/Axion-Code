@@ -21,30 +21,30 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Protocol, runtime_checkable
 
+from axion.api.client import (
+    ProviderClient,
+    max_tokens_for_model,
+    resolve_model_alias,
+)
 from axion.api.types import (
     ContentBlockDeltaEvent,
     ContentBlockStartEvent,
+    InputJsonDelta,
     InputMessage,
     MessageDeltaEvent,
     MessageRequest,
-    MessageResponse,
     MessageStartEvent,
     MessageStopEvent,
-    StreamEvent,
     TextDelta,
-    TextOutputBlock,
     ToolUseOutputBlock,
-    InputJsonDelta,
-    Usage,
 )
-from axion.api.client import ProviderClient, max_tokens_for_model, resolve_model_alias, MAX_TOKENS_FOR_MODEL
 from axion.runtime.compact import (
     CompactionConfig,
     CompactionResult,
     compact_session,
     estimate_session_tokens,
 )
-from axion.runtime.hooks import HookRunner, HookRunResult
+from axion.runtime.hooks import HookRunner
 from axion.runtime.permissions import (
     PermissionAllow,
     PermissionDeny,
@@ -52,9 +52,6 @@ from axion.runtime.permissions import (
     PermissionOverride,
     PermissionPolicy,
     PermissionPrompter,
-    PermissionRequest,
-    PermissionMode,
-    TOOL_PERMISSION_REQUIREMENTS,
 )
 from axion.runtime.session import (
     ContentBlock,
@@ -808,9 +805,11 @@ class ConversationRuntime:
         """Convert session messages to API input format."""
         from axion.api.types import (
             TextInputBlock,
-            ToolResultBlock as ApiToolResultBlock,
             ToolResultTextContent,
             ToolUseInputBlock,
+        )
+        from axion.api.types import (
+            ToolResultBlock as ApiToolResultBlock,
         )
 
         api_messages: list[InputMessage] = []

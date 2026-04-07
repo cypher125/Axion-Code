@@ -1,7 +1,5 @@
 """Tests for file operations."""
 
-import os
-from pathlib import Path
 
 import pytest
 

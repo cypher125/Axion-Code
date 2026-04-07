@@ -7,7 +7,6 @@ from axion.runtime.policy_engine import (
     ConditionOr,
     ConditionReviewPassed,
     ConditionStaleBranch,
-    LaneBlocker,
     LaneContext,
     PolicyAction,
     PolicyActionSpec,

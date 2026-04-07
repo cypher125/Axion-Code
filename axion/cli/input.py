@@ -5,19 +5,17 @@ Maps to: rust/crates/rusty-claude-cli/src/input.rs
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import Any
 
 from prompt_toolkit import PromptSession
-from prompt_toolkit.completion import Completer, Completion, WordCompleter
+from prompt_toolkit.completion import Completer, Completion
 from prompt_toolkit.document import Document
 from prompt_toolkit.formatted_text import HTML
 from prompt_toolkit.history import FileHistory
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.keys import Keys
 from prompt_toolkit.styles import Style
-
 
 # ---------------------------------------------------------------------------
 # Slash command completer

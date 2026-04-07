@@ -1,14 +1,14 @@
 """Tests for tool registry."""
 
 from axion.tools.registry import (
-    GlobalToolRegistry,
-    get_tool_registry,
     BASH_TOOL,
-    READ_TOOL,
-    WRITE_TOOL,
     EDIT_TOOL,
     GLOB_TOOL,
     GREP_TOOL,
+    READ_TOOL,
+    WRITE_TOOL,
+    GlobalToolRegistry,
+    get_tool_registry,
 )
 
 

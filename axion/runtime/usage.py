@@ -6,6 +6,7 @@ Maps to: rust/crates/runtime/src/usage.rs
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any
 
 # Default pricing (Sonnet tier)
 DEFAULT_INPUT_COST_PER_MILLION = 15.0
@@ -170,7 +171,3 @@ class UsageTracker:
             if msg.usage is not None:
                 tracker.record_turn(msg.usage)
         return tracker
-
-
-# Need Any for type hint
-from typing import Any

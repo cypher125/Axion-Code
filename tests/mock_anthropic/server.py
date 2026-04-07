@@ -5,20 +5,18 @@ Maps to: rust/crates/mock-anthropic-service/src/lib.rs
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 from aiohttp import web
 
 from tests.mock_anthropic.scenarios import (
-    Scenario,
     build_scenario_response,
     detect_scenario,
-    text_message_response,
     streaming_text_sse,
+    text_message_response,
 )
 
 logger = logging.getLogger(__name__)
