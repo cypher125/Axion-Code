@@ -8,11 +8,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-# Default pricing (Sonnet tier)
-DEFAULT_INPUT_COST_PER_MILLION = 15.0
-DEFAULT_OUTPUT_COST_PER_MILLION = 75.0
-DEFAULT_CACHE_CREATION_COST_PER_MILLION = 18.75
-DEFAULT_CACHE_READ_COST_PER_MILLION = 1.5
+# Default pricing (Sonnet 4 tier - $3 input / $15 output per million tokens)
+DEFAULT_INPUT_COST_PER_MILLION = 3.0
+DEFAULT_OUTPUT_COST_PER_MILLION = 15.0
+DEFAULT_CACHE_CREATION_COST_PER_MILLION = 3.75
+DEFAULT_CACHE_READ_COST_PER_MILLION = 0.3
 
 
 @dataclass

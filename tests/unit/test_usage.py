@@ -27,8 +27,8 @@ def test_cost_estimation():
     )
     cost = usage.estimate_cost_usd()
     assert cost.total_cost_usd() > 0
-    assert cost.input_cost_usd == 15.0  # 1M * $15/M
-    assert cost.output_cost_usd == 37.5  # 500K * $75/M
+    assert cost.input_cost_usd == 3.0   # 1M * $3/M (Sonnet default)
+    assert cost.output_cost_usd == 7.5  # 500K * $15/M (Sonnet default)
 
 
 def test_format_usd():
