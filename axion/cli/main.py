@@ -1296,11 +1296,35 @@ async def _run_login(provider_name: str = "anthropic") -> int:
         console.print(f"[green]{env_var} is already set in your environment.[/green]")
         console.print("[dim]Want to save it permanently? Enter 'save' below, or enter a different key.[/dim]\n")
 
+    # Provider-specific info
+    provider_info = {
+        "anthropic": {
+            "display": "Anthropic (Claude)",
+            "url": "https://console.anthropic.com/settings/keys",
+            "prefix": "sk-ant-",
+            "models": "opus, sonnet, haiku",
+        },
+        "openai": {
+            "display": "OpenAI (GPT)",
+            "url": "https://platform.openai.com/api-keys",
+            "prefix": "sk-",
+            "models": "gpt-4o, o1, o3",
+        },
+        "xai": {
+            "display": "xAI (Grok)",
+            "url": "https://console.x.ai",
+            "prefix": "xai-",
+            "models": "grok-2",
+        },
+    }
+    info = provider_info.get(provider_name, provider_info["anthropic"])
+
     # Prompt for API key
-    console.print(f"Provider: [bold]{provider_name}[/bold]")
+    console.print(f"Provider: [bold]{info['display']}[/bold]")
+    console.print(f"Models: [dim]{info['models']}[/dim]")
     console.print()
     console.print("Enter your API key (or 'save' to save the current env key):")
-    console.print("  Get one at: [link]https://console.anthropic.com/settings/keys[/link]")
+    console.print(f"  Get one at: [link]{info['url']}[/link]")
     console.print()
 
     try:
@@ -1331,7 +1355,14 @@ async def _run_login(provider_name: str = "anthropic") -> int:
     masked = answer[:8] + "..." + answer[-4:]
     console.print(f"\n[green]Key saved![/green] ({masked})")
     console.print(f"Stored at: [dim]{key_path}[/dim]")
-    console.print("\n[bold]You're ready to go![/bold] Run [cyan]axion[/cyan] to start.")
+
+    # Show how to use it
+    if provider_name == "anthropic":
+        console.print("\n[bold]You're ready to go![/bold] Run [cyan]axion[/cyan] to start.")
+    elif provider_name == "openai":
+        console.print("\n[bold]You're ready to go![/bold] Run [cyan]axion -m gpt-4o[/cyan] to start.")
+    elif provider_name == "xai":
+        console.print("\n[bold]You're ready to go![/bold] Run [cyan]axion -m grok-2[/cyan] to start.")
     return 0
 
 

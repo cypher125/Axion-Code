@@ -137,8 +137,19 @@ class OpenAiCompatClient:
 
     @classmethod
     def from_env(cls, config: OpenAiCompatConfig) -> OpenAiCompatClient:
-        """Create a client reading the API key from the environment."""
+        """Create a client reading the API key from env or saved file."""
         api_key = _read_env_non_empty(config.api_key_env)
+
+        # Check saved key file (from `axion login --provider <name>`)
+        if api_key is None:
+            from pathlib import Path
+            key_path = Path.home() / ".axion" / "credentials" / f"{config.provider_name}.key"
+            if key_path.exists():
+                saved = key_path.read_text(encoding="utf-8").strip()
+                if saved:
+                    api_key = saved
+                    os.environ[config.api_key_env] = saved
+
         if api_key is None:
             raise MissingCredentialsError(
                 provider=config.provider_name,
