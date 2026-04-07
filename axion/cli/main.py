@@ -1196,12 +1196,42 @@ async def run_repl(
             # Send to model
             text_buffer.clear()
             _turn_interrupted = False
+            thinking_started[0] = False
+
+            # Spinner to show while waiting for first response
+            from axion.cli.render import Spinner as AxionSpinner
+            spinner = AxionSpinner()
+            spinner_active = True
+
+            _original_text_cb = runtime.on_text_delta
+            _original_tool_cb = runtime.on_tool_use
+
+            def _stop_spinner() -> None:
+                nonlocal spinner_active
+                if spinner_active:
+                    spinner.stop()
+                    spinner_active = False
+
+            def _text_with_spinner(text: str) -> None:
+                _stop_spinner()
+                if _original_text_cb:
+                    _original_text_cb(text)
+
+            def _tool_with_spinner(name: str, inp: str) -> None:
+                _stop_spinner()
+                if _original_tool_cb:
+                    _original_tool_cb(name, inp)
+
+            runtime.on_text_delta = _text_with_spinner
+            runtime.on_tool_use = _tool_with_spinner
 
             try:
                 if output_format != "json":
                     console.print()  # Blank line before response
+                    spinner.start("Thinking...")
 
                 summary = await runtime.run_turn(user_input)
+                _stop_spinner()
 
                 # Flush remaining markdown
                 if output_format != "json":
@@ -1226,11 +1256,13 @@ async def run_repl(
                         )
 
             except KeyboardInterrupt:
+                _stop_spinner()
                 _turn_interrupted = True
                 console.print("\n[yellow]Interrupted[/yellow]")
                 repl_md_stream._pending = ""
                 repl_md_stream._in_code_fence = False
             except Exception as exc:
+                _stop_spinner()
                 repl_md_stream._pending = ""
                 repl_md_stream._in_code_fence = False
                 error_msg = str(exc)
@@ -1253,6 +1285,11 @@ async def run_repl(
                 else:
                     console.print(f"\n[red]Error: {error_msg}[/red]")
                 logger.exception("Error during turn")
+
+            finally:
+                # Restore original callbacks
+                runtime.on_text_delta = _original_text_cb
+                runtime.on_tool_use = _original_tool_cb
 
             # Persist session after each turn
             try:
