@@ -74,6 +74,10 @@ SLASH_COMMAND_SPECS: list[SlashCommandSpec] = [
         argument_hint="[model_name]", category="model",
     ),
     SlashCommandSpec(
+        name="models", summary="List available Ollama models",
+        resume_supported=True, category="model",
+    ),
+    SlashCommandSpec(
         name="permissions", summary="Show or change permission mode",
         argument_hint="[read-only|workspace-write|danger-full-access]",
         category="model",

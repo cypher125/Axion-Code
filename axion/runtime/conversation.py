@@ -36,6 +36,8 @@ from axion.api.types import (
     MessageStartEvent,
     MessageStopEvent,
     TextDelta,
+    ToolChoice,
+    ToolDefinition,
     ToolUseOutputBlock,
 )
 from axion.runtime.compact import (
@@ -469,16 +471,42 @@ class ConversationRuntime:
         def full_text(self) -> str:
             return "".join(self.text_parts)
 
+    def _build_tool_definitions(self) -> list[ToolDefinition] | None:
+        """Build API tool definitions from the tool registry.
+
+        Returns None if no tool executor is configured (the model won't see any tools).
+        """
+        if self.tool_executor is None:
+            return None
+
+        from axion.tools.registry import get_tool_registry
+
+        registry = get_tool_registry()
+        tools = []
+        for tool_def in registry.all_tools():
+            tools.append(ToolDefinition(
+                name=tool_def.spec.name,
+                description=tool_def.spec.description,
+                input_schema=tool_def.spec.input_schema,
+            ))
+        return tools if tools else None
+
     async def _stream_model_response(
         self, api_messages: list[InputMessage]
     ) -> _StreamResult:
         """Stream a single model request and assemble the response."""
         resolved_model = resolve_model_alias(self.model)
+
+        # Build tool definitions so the model knows what tools are available
+        tool_defs = self._build_tool_definitions()
+
         request = MessageRequest(
             model=resolved_model,
             max_tokens=max_tokens_for_model(resolved_model),
             messages=api_messages,
             system=self.system_prompt or None,
+            tools=tool_defs,
+            tool_choice=ToolChoice.auto() if tool_defs else None,
             stream=True,
         )
 

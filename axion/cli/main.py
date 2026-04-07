@@ -37,7 +37,7 @@ from axion.api.client import (
     ProviderClient,
     resolve_model_alias,
 )
-from axion.cli.render import CLAW_THEME, TerminalRenderer
+from axion.cli.render import CLAW_THEME, MarkdownStreamState, TerminalRenderer
 from axion.commands.handlers.agents import handle_agents_command
 from axion.commands.handlers.mcp import handle_mcp_command
 from axion.commands.handlers.plugins import handle_plugins_command
@@ -345,9 +345,9 @@ def _build_runtime(
     # Build provider
     provider = ProviderClient.from_model(effective_model)
 
-    # Build system prompt
+    # Build system prompt (render to string, not list)
     prompt_builder = SystemPromptBuilder.for_cwd()
-    system_prompt = prompt_builder.build()
+    system_prompt = prompt_builder.render()
 
     # Build permission policy
     effective_perm = permission_mode
@@ -387,11 +387,16 @@ async def run_one_shot(
     session = Session()
 
     text_buffer: list[str] = []
+    md_stream = MarkdownStreamState()
 
     def on_text_delta(text: str) -> None:
-        if output_format != "json":
-            console.print(text, end="", highlight=False)
         text_buffer.append(text)
+        if output_format == "json":
+            return
+        # Use markdown streaming: buffer until safe boundary, then render
+        rendered = md_stream.push(renderer, text)
+        if rendered:
+            console.print(Markdown(rendered), end="")
 
     runtime, provider = _build_runtime(
         model=model,
@@ -402,10 +407,13 @@ async def run_one_shot(
     )
 
     try:
-        with console.status("[bold green]Thinking...", spinner="dots"):
-            pass
-
         summary = await runtime.run_turn(prompt)
+
+        # Flush any remaining markdown
+        if output_format != "json":
+            remaining = md_stream.flush(renderer)
+            if remaining:
+                console.print(Markdown(remaining))
 
         if output_format == "json":
             json_out = _build_json_output(summary, runtime.model)
@@ -929,13 +937,17 @@ async def run_repl(
     session_path = _session_path_for_id(session.session_id)
     session.with_persistence_path(session_path)
 
-    # Build runtime
+    # Build runtime with markdown streaming
     text_buffer: list[str] = []
+    repl_md_stream = MarkdownStreamState()
 
     def on_text_delta(text: str) -> None:
-        if output_format != "json":
-            console.print(text, end="", highlight=False)
         text_buffer.append(text)
+        if output_format == "json":
+            return
+        rendered = repl_md_stream.push(renderer, text)
+        if rendered:
+            console.print(Markdown(rendered), end="")
 
     runtime, provider = _build_runtime(
         model=model,
@@ -1010,6 +1022,12 @@ async def run_repl(
 
                 summary = await runtime.run_turn(user_input)
 
+                # Flush remaining markdown
+                if output_format != "json":
+                    remaining = repl_md_stream.flush(renderer)
+                    if remaining:
+                        console.print(Markdown(remaining))
+
                 if output_format == "json":
                     json_out = _build_json_output(summary, runtime.model)
                     click.echo(json.dumps(json_out))
@@ -1040,11 +1058,30 @@ async def run_repl(
             except KeyboardInterrupt:
                 _turn_interrupted = True
                 console.print("\n[yellow]Interrupted[/yellow]")
+                repl_md_stream._pending = ""
+                repl_md_stream._in_code_fence = False
             except Exception as exc:
+                repl_md_stream._pending = ""
+                repl_md_stream._in_code_fence = False
+                error_msg = str(exc)
                 if output_format == "json":
-                    click.echo(json.dumps({"error": str(exc)}))
+                    click.echo(json.dumps({"error": error_msg}))
+                elif "context window" in error_msg.lower() or "too many tokens" in error_msg.lower():
+                    renderer.render_context_window_error(
+                        model=runtime.model,
+                        estimated_tokens=estimate_session_tokens(session),
+                        context_window=200_000,
+                        session_id=session.session_id,
+                    )
+                    console.print("[dim]Try /compact to reduce history or /clear to start fresh.[/dim]")
+                elif "api key" in error_msg.lower() or "credentials" in error_msg.lower():
+                    console.print(f"[red]Authentication error: {error_msg}[/red]")
+                    console.print("[dim]Check your ANTHROPIC_API_KEY or run /login[/dim]")
+                elif "timeout" in error_msg.lower() or "connect" in error_msg.lower():
+                    console.print(f"[yellow]Connection error: {error_msg}[/yellow]")
+                    console.print("[dim]Check your internet connection and try again.[/dim]")
                 else:
-                    console.print(f"\n[red]Error: {exc}[/red]")
+                    console.print(f"\n[red]Error: {error_msg}[/red]")
                 logger.exception("Error during turn")
 
             # Persist session after each turn
