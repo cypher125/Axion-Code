@@ -36,6 +36,7 @@ from axion.api.types import (
     MessageStartEvent,
     MessageStopEvent,
     TextDelta,
+    ThinkingDelta,
     ToolChoice,
     ToolDefinition,
     ToolUseOutputBlock,
@@ -247,6 +248,8 @@ class ConversationRuntime:
     on_text_delta: Callable[[str], None] | None = None
     on_tool_use: Callable[[str, str], None] | None = None  # (tool_name, tool_input)
     on_tool_result: Callable[[str, str, bool], None] | None = None  # (tool_name, output, is_error)
+    on_thinking: Callable[[str], None] | None = None  # (thinking_text)
+    cost_budget_usd: float | None = None  # Max spend per session (None = unlimited)
 
     # -- Builder helpers -----------------------------------------------------
 
@@ -395,6 +398,16 @@ class ConversationRuntime:
                 self.usage_tracker.record_turn(stream_result.usage)
                 cumulative_input_tokens += stream_result.usage.input_tokens
 
+                # Check cost budget
+                if self.cost_budget_usd is not None:
+                    total_cost = self.usage_tracker.total.estimate_cost_usd()
+                    if total_cost.total_cost_usd() >= self.cost_budget_usd:
+                        raise ConversationError(
+                            f"Cost budget exceeded: ${total_cost.total_cost_usd():.4f} >= "
+                            f"${self.cost_budget_usd:.4f} budget. "
+                            f"Use /cost to see breakdown or increase the budget."
+                        )
+
                 # Collect prompt cache events
                 if stream_result.prompt_cache_event:
                     summary.prompt_cache_events.append(stream_result.prompt_cache_event)
@@ -468,6 +481,7 @@ class ConversationRuntime:
     class _StreamResult:
         """Internal: assembled result from one streaming model response."""
         text_parts: list[str] = field(default_factory=list)
+        thinking_parts: list[str] = field(default_factory=list)
         tool_uses: list[dict[str, Any]] = field(default_factory=list)
         usage: TokenUsage = field(default_factory=TokenUsage)
         stop_reason: str | None = None
@@ -558,6 +572,13 @@ class ConversationRuntime:
                     elif isinstance(delta, InputJsonDelta):
                         if idx in current_tool_inputs:
                             current_tool_inputs[idx].append(delta.partial_json)
+                    elif isinstance(delta, ThinkingDelta) and delta.thinking:
+                        result.thinking_parts.append(delta.thinking)
+                        if self.on_thinking:
+                            try:
+                                self.on_thinking(delta.thinking)
+                            except Exception:
+                                pass
 
                 case MessageDeltaEvent(delta=d, usage=u):
                     result.usage.output_tokens = u.output_tokens

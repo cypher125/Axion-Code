@@ -160,6 +160,53 @@ def read_file(
             f"Use offset/limit to read portions."
         )
 
+    # Image files — return base64 encoded content description
+    IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".svg", ".ico"}
+    if path.suffix.lower() in IMAGE_EXTENSIONS:
+        import base64
+        encoded = base64.b64encode(path.read_bytes()).decode("ascii")
+        content = (
+            f"[Image file: {path.name} ({file_size:,} bytes)]\n"
+            f"Format: {path.suffix.lower()}\n"
+            f"Base64 ({len(encoded)} chars): {encoded[:200]}...\n\n"
+            f"This is an image file. The full base64 content is available for the model to interpret."
+        )
+        return ReadFileOutput(
+            file_path=file_path, content=content,
+            num_lines=4, total_lines=4, kind="image",
+        )
+
+    # PDF files — extract text content
+    PDF_EXTENSIONS = {".pdf"}
+    if path.suffix.lower() in PDF_EXTENSIONS:
+        try:
+            import subprocess as _sp
+            # Try pdftotext if available
+            result = _sp.run(
+                ["pdftotext", "-layout", file_path, "-"],
+                capture_output=True, text=True, timeout=10,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                text = result.stdout
+                lines = text.splitlines()
+                content = "\n".join(f"{i}\t{line}" for i, line in enumerate(lines, 1))
+                return ReadFileOutput(
+                    file_path=file_path, content=content,
+                    num_lines=len(lines), total_lines=len(lines), kind="pdf",
+                )
+        except (FileNotFoundError, Exception):
+            pass
+        # Fallback: read raw bytes and report metadata
+        content = (
+            f"[PDF file: {path.name} ({file_size:,} bytes)]\n"
+            f"Install 'pdftotext' (poppler-utils) for text extraction.\n"
+            f"Alternatively, use WebFetch to fetch an online version."
+        )
+        return ReadFileOutput(
+            file_path=file_path, content=content,
+            num_lines=3, total_lines=3, kind="pdf",
+        )
+
     # Binary check
     if is_binary_file(path):
         raise ValueError(f"Binary file detected: {file_path}. Cannot read binary files as text.")

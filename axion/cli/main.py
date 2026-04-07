@@ -796,22 +796,33 @@ def _handle_resume_in_repl(args: str, session: Session, runtime: ConversationRun
 
 
 def _handle_diff_command(args: str, session: Session) -> str:
-    """Handle /diff to show changes made in this session."""
-    try:
-        result = subprocess.run(
-            ["git", "diff"],
-            capture_output=True, text=True, timeout=10,
-        )
-        if result.returncode == 0:
-            diff = result.stdout.strip()
-            if not diff:
-                return "No uncommitted changes."
-            if len(diff) > 3000:
-                diff = diff[:3000] + "\n... (truncated)"
-            return diff
-        return f"git diff failed: {result.stderr.strip()}"
-    except (subprocess.SubprocessError, FileNotFoundError):
-        return "Unable to run git diff."
+    """Handle /diff with syntax-highlighted output using Rich."""
+    from rich.syntax import Syntax
+
+    # Get both staged and unstaged diffs
+    sections: list[str] = []
+    for label, git_args in [
+        ("Staged changes", ["git", "diff", "--cached"]),
+        ("Unstaged changes", ["git", "diff"]),
+    ]:
+        try:
+            result = subprocess.run(
+                git_args, capture_output=True, text=True, timeout=10,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                sections.append(f"### {label}")
+                diff_text = result.stdout.strip()
+                if len(diff_text) > 5000:
+                    diff_text = diff_text[:5000] + "\n... (truncated)"
+                # Render with syntax highlighting
+                syntax = Syntax(diff_text, "diff", theme="monokai", line_numbers=False)
+                console.print(syntax)
+        except (subprocess.SubprocessError, FileNotFoundError):
+            pass
+
+    if not sections:
+        return "No uncommitted changes."
+    return ""  # Already printed via Rich
 
 
 def _handle_export_command(args: str, session: Session) -> str:
@@ -941,6 +952,7 @@ async def run_repl(
     permission_mode: str,
     resume: str | None = None,
     output_format: str = "text",
+    budget: float | None = None,
 ) -> int:
     """Run the interactive REPL loop."""
     from prompt_toolkit import PromptSession
@@ -996,6 +1008,17 @@ async def run_repl(
             return
         _render_tool_result(tool_name, output, is_error)
 
+    thinking_started = [False]  # mutable flag for closure
+
+    def on_thinking_cb(thinking_text: str) -> None:
+        """Show collapsed thinking indicator."""
+        if output_format == "json":
+            return
+        if not thinking_started[0]:
+            thinking_started[0] = True
+            console.print("[dim italic]💭 Thinking...[/dim italic]")
+        # Don't show the actual thinking text — just the indicator
+
     runtime, provider = _build_runtime(
         model=model,
         permission_mode=permission_mode,
@@ -1005,6 +1028,9 @@ async def run_repl(
         on_tool_use=on_tool_use_cb,
         on_tool_result=on_tool_result_cb,
     )
+    runtime.on_thinking = on_thinking_cb
+    if budget is not None:
+        runtime.cost_budget_usd = budget
 
     # Restore usage tracker from resumed session
     if resume:
@@ -1304,6 +1330,8 @@ def _run_logout(provider_name: str = "anthropic") -> int:
 @click.option("--verbose", is_flag=True, help="Enable verbose logging")
 @click.option("--system-prompt", "system_prompt_file", default=None, type=click.Path(exists=True),
               help="Path to a custom system prompt file")
+@click.option("--budget", default=None, type=float,
+              help="Max cost budget in USD for this session (e.g. --budget 1.00)")
 @click.pass_context
 def cli(
     ctx: click.Context,
@@ -1315,6 +1343,7 @@ def cli(
     resume: str | None,
     verbose: bool,
     system_prompt_file: str | None,
+    budget: float | None,
 ) -> None:
     """Axion Code - Python CLI agent harness.
 
@@ -1345,7 +1374,7 @@ def cli(
     if prompt:
         exit_code = asyncio.run(run_one_shot(prompt, model, permission_mode, output_format))
     else:
-        exit_code = asyncio.run(run_repl(model, permission_mode, resume, output_format))
+        exit_code = asyncio.run(run_repl(model, permission_mode, resume, output_format, budget))
 
     sys.exit(exit_code)
 
