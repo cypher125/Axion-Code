@@ -366,8 +366,10 @@ class BuiltinToolExecutor:
                 return self._exec_notebook_edit(params)
             case "Skill":
                 return self._exec_skill(params)
+            case "ToolSearch":
+                return self._exec_tool_search(params)
             case _:
-                return f"Tool '{tool_name}' is not yet implemented in the Python port."
+                return f"Tool '{tool_name}' is not yet implemented."
 
     async def _exec_bash(self, params: dict[str, Any]) -> str:
         from pathlib import Path
@@ -763,3 +765,42 @@ class BuiltinToolExecutor:
             return f"Error loading skill '{skill_name}': {exc}"
 
         return execute_skill(skill, user_args)
+
+    # -----------------------------------------------------------------------
+    # ToolSearch — deferred tool schema loading
+    # -----------------------------------------------------------------------
+
+    @staticmethod
+    def _exec_tool_search(params: dict[str, Any]) -> str:
+        """Search for tools by keyword or fetch schemas by name."""
+        from axion.tools.tool_search import tool_search
+
+        query = params.get("query", "")
+        max_results = int(params.get("max_results", 5))
+
+        if not query:
+            return "Error: query parameter is required"
+
+        output = tool_search(query, max_results=max_results)
+
+        # Format results
+        if output.schemas:
+            # Direct selection — return full schemas
+            import json
+            lines = [output.message, ""]
+            for schema in output.schemas:
+                lines.append(f"## {schema['name']}")
+                lines.append(f"Description: {schema['description'][:200]}")
+                lines.append(f"Schema: {json.dumps(schema['input_schema'], indent=2)}")
+                lines.append("")
+            return "\n".join(lines)
+
+        if output.results:
+            lines = [output.message, ""]
+            for r in output.results:
+                lines.append(f"  - **{r.name}** (score: {r.score:.1f}): {r.description}")
+            lines.append("")
+            lines.append("Use 'select:ToolName' to fetch the full schema.")
+            return "\n".join(lines)
+
+        return f"No tools found matching: {query}"
