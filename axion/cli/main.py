@@ -186,8 +186,14 @@ class CliPermissionPrompter:
     Implements the PermissionPrompter protocol.
     """
 
+    def __init__(self) -> None:
+        self._stop_spinner_fn: Any = None  # Set by REPL to stop spinner
+
     async def decide(self, request: PermissionRequest) -> PermissionPromptDecision:
         """Show an interactive prompt and wait for user decision."""
+        # Stop the spinner before showing the prompt
+        if self._stop_spinner_fn:
+            self._stop_spinner_fn()
         console.print()
         console.print("[bold yellow]Permission required[/bold yellow]")
         console.print(f"  Tool: [bold]{request.tool_name}[/bold]")
@@ -1316,6 +1322,9 @@ async def run_repl(
 
             runtime.on_text_delta = _text_with_spinner
             runtime.on_tool_use = _tool_with_spinner
+            # Wire spinner stop into permission prompter so it clears before [y/N] shows
+            if runtime.permission_prompter and hasattr(runtime.permission_prompter, '_stop_spinner_fn'):
+                runtime.permission_prompter._stop_spinner_fn = _stop_spinner
 
             try:
                 if output_format != "json":

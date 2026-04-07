@@ -7,10 +7,7 @@ from __future__ import annotations
 
 import enum
 import json
-import sys
-import threading
-import time
-from typing import Any, TextIO
+from typing import Any
 
 from rich.console import Console
 from rich.markdown import Markdown
@@ -68,39 +65,31 @@ CLAW_THEME = Theme({
 # ---------------------------------------------------------------------------
 
 class Spinner:
-    """Animated braille spinner for progress indication.
+    """Animated spinner using Rich (works cross-platform including Windows).
 
     Maps to: rust/crates/rusty-claude-cli/src/render.rs::Spinner
     """
 
-    def __init__(self, out: TextIO | None = None) -> None:
-        self._out = out or sys.stderr
-        self._frame = 0
+    def __init__(self, console: Console | None = None) -> None:
+        self._console = console or Console(stderr=True)
+        self._status: Any | None = None
         self._running = False
-        self._thread: threading.Thread | None = None
-        self._label = ""
-        self._lock = threading.Lock()
 
     def start(self, label: str = "Thinking...") -> None:
-        """Start the spinner animation."""
-        self._label = label
+        """Start the spinner animation using Rich Status."""
         self._running = True
-        self._thread = threading.Thread(target=self._animate, daemon=True)
-        self._thread.start()
+        self._status = self._console.status(f"[cyan]{label}[/cyan]", spinner="dots")
+        self._status.start()
 
     def stop(self, final_label: str | None = None, success: bool = True) -> None:
-        """Stop the spinner and show final status."""
+        """Stop the spinner and optionally show final status."""
         self._running = False
-        if self._thread:
-            self._thread.join(timeout=1.0)
-            self._thread = None
-        # Clear the spinner line
-        self._out.write("\r\033[K")
+        if self._status:
+            self._status.stop()
+            self._status = None
         if final_label:
-            icon = "✔" if success else "✘"
-            color = "\033[32m" if success else "\033[31m"
-            self._out.write(f"{color}{icon}\033[0m {final_label}\n")
-        self._out.flush()
+            icon = "[green]✔[/green]" if success else "[red]✘[/red]"
+            self._console.print(f"{icon} {final_label}")
 
     def finish(self, label: str = "Done") -> None:
         """Stop with success indicator."""
@@ -109,15 +98,6 @@ class Spinner:
     def fail(self, label: str = "Failed") -> None:
         """Stop with failure indicator."""
         self.stop(label, success=False)
-
-    def _animate(self) -> None:
-        while self._running:
-            with self._lock:
-                frame = SPINNER_FRAMES[self._frame % len(SPINNER_FRAMES)]
-                self._frame += 1
-            self._out.write(f"\r\033[36m{frame}\033[0m {self._label}")
-            self._out.flush()
-            time.sleep(SPINNER_INTERVAL_MS / 1000)
 
 
 # ---------------------------------------------------------------------------
