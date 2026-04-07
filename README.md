@@ -22,12 +22,19 @@ pip install -e ".[dev]"
 ## Quick Start
 
 ```bash
-# Set your API key
-export ANTHROPIC_API_KEY=sk-ant-...
+# 1. Install
+pip install axion-code
 
-# Interactive REPL
+# 2. Log in (one time — saves your key permanently)
+axion login
+
+# 3. Start coding
 axion
+```
 
+That's it. No environment variables, no `.env` files. Your API key is saved to `~/.axion/credentials/` and works across all terminal sessions.
+
+```bash
 # One-shot prompt
 axion -p "Find and fix the bug in auth.py"
 
@@ -45,28 +52,34 @@ axion --resume latest
 
 # Health check
 axion doctor
+
+# Log out (removes saved key)
+axion logout
 ```
 
 ## Supported Providers
 
-| Provider | Models | Env Variable | Setup |
+| Provider | Models | Login | Free? |
 |---|---|---|---|
-| **Anthropic** | Claude Opus, Sonnet, Haiku | `ANTHROPIC_API_KEY` | `export ANTHROPIC_API_KEY=sk-ant-...` |
-| **OpenAI** | GPT-4o, o1, o3 | `OPENAI_API_KEY` | `export OPENAI_API_KEY=sk-...` |
-| **xAI** | Grok-2 | `XAI_API_KEY` | `export XAI_API_KEY=xai-...` |
-| **Ollama** | Llama, Mistral, DeepSeek, Phi, Gemma, Qwen, CodeLlama | None (local) | [Install Ollama](https://ollama.ai) |
+| **Anthropic** | Claude Opus, Sonnet, Haiku | `axion login` | No |
+| **OpenAI** | GPT-4o, o1, o3 | `axion login --provider openai` | No |
+| **xAI** | Grok-2 | `axion login --provider xai` | No |
+| **Ollama** | Llama, Mistral, DeepSeek, Phi, Gemma, Qwen, CodeLlama | No login needed | Yes |
 
 ```bash
 # Anthropic (default)
+axion login
 axion -p "Explain this codebase"
 
 # OpenAI
+axion login --provider openai
 axion -m gpt-4o -p "Refactor this function"
 
 # xAI
+axion login --provider xai
 axion -m grok-2 -p "Write tests for this module"
 
-# Local models via Ollama (no API key, no internet, free)
+# Local models via Ollama (free, no login, no internet)
 ollama pull llama3.1
 axion -m llama3.1 -p "Review this code"
 
@@ -305,6 +318,19 @@ axion/
 
 ## Configuration
 
+### Authentication
+
+```bash
+axion login                      # Save Anthropic API key
+axion login --provider openai    # Save OpenAI key
+axion login --provider xai       # Save xAI key
+axion logout                     # Remove all saved keys
+```
+
+Keys are saved to `~/.axion/credentials/` with restricted file permissions. No environment variables needed — though env vars still work if you prefer them.
+
+### Config File Hierarchy
+
 Axion merges configuration from multiple sources (later overrides earlier):
 
 1. **User**: `~/.claude/settings.json`
@@ -425,7 +451,7 @@ GitHub Actions runs on every push and PR:
 | Metric | Value |
 |---|---|
 | Python files | 102 |
-| Lines of code | 18,198 |
+| Lines of code | 18,184 |
 | Unit tests | 166 |
 | Integration tests | 7 (mock server) |
 | Providers | 4 (Anthropic, OpenAI, xAI, Ollama) |
