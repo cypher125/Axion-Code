@@ -44,7 +44,7 @@ def test_pricing_for_model():
 
     opus = pricing_for_model("claude-opus-4-6")
     assert opus is not None
-    assert opus.input_cost_per_million == 15.0
+    assert opus.input_cost_per_million == 5.0  # Opus 4.6: $5/MTok
 
     unknown = pricing_for_model("unknown-model")
     assert unknown is None

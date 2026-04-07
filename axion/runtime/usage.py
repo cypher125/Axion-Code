@@ -125,10 +125,10 @@ def pricing_for_model(model: str | None) -> ModelPricing | None:
         )
     if "opus" in normalized:
         return ModelPricing(
-            input_cost_per_million=15.0,
-            output_cost_per_million=75.0,
-            cache_creation_cost_per_million=18.75,
-            cache_read_cost_per_million=1.5,
+            input_cost_per_million=5.0,   # Opus 4.6: $5/MTok input
+            output_cost_per_million=25.0,  # Opus 4.6: $25/MTok output
+            cache_creation_cost_per_million=6.25,
+            cache_read_cost_per_million=0.5,
         )
     if "sonnet" in normalized:
         return ModelPricing.default_sonnet_tier()
