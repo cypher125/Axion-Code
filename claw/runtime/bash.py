@@ -142,9 +142,14 @@ def _build_sandbox_command(
             args.extend(["--", "sh", "-c", command])
             return args
 
-    # Default: plain bash
+    # Default: use available shell
     if sys.platform == "win32":
-        return ["bash", "-c", command]
+        # On Windows, try Git Bash first, then fall back to cmd
+        git_bash = Path(os.environ.get("PROGRAMFILES", r"C:\Program Files")) / "Git" / "bin" / "bash.exe"
+        if git_bash.exists():
+            return [str(git_bash), "-c", command]
+        # Fallback to cmd.exe
+        return ["cmd", "/C", command]
     return ["/bin/bash", "-lc", command]
 
 
