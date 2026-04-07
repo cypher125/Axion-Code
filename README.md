@@ -160,7 +160,7 @@ Three choices: `y` (allow once), `a` (allow always — remembered for this tool)
 
 ### Session Persistence & Resume
 
-Every conversation is automatically saved. Pick up where you left off:
+Every conversation is automatically saved. Manage multiple sessions:
 
 ```bash
 # Resume the last session
@@ -169,8 +169,13 @@ axion --resume latest
 # Resume by session ID (or partial ID)
 axion --resume abc123
 
-# List all saved sessions
-axion session list
+# Inside the REPL:
+/session list           # List all saved sessions
+/session switch abc123  # Switch to a different session
+/session new            # Start a fresh session (saves current)
+/session fork feature   # Fork current session with a name
+/session delete abc123  # Remove an old session
+/session show           # Show current session info
 ```
 
 Sessions are stored as JSONL files in `.axion/sessions/` with automatic rotation at 256KB.
@@ -233,6 +238,29 @@ axion --budget 1.00
 ```
 
 Budgets are checked after every API call. Use `/cost` anytime to see your running total.
+
+### Conversation Export
+
+Export any session to a clean, readable markdown file:
+
+```bash
+/export                    # Saves to transcript-<session_id>.md
+/export my-project.md      # Custom filename
+```
+
+The export includes numbered turns, collapsible tool use/result blocks (`<details>`), pretty-printed JSON, per-message token costs, and session metadata.
+
+### Cron Scheduling
+
+Schedule recurring tasks with standard cron expressions:
+
+```python
+# From the task/cron registries:
+cron_registry.create("*/5 * * * *", TaskPacket(objective="Run health check", scope="all"))
+cron_registry.create("0 9 * * 1-5", TaskPacket(objective="Daily standup summary", scope="src/"))
+```
+
+The `CronScheduler` runs as an async background loop, checking enabled entries every minute and triggering tasks via the `TaskRegistry`. Supports `*`, `*/N`, ranges (`1-5`), and comma lists (`0,15,30,45`).
 
 ## Architecture
 
@@ -396,9 +424,9 @@ GitHub Actions runs on every push and PR:
 
 | Metric | Value |
 |---|---|
-| Python files | 100 |
-| Lines of code | 17,750 |
-| Unit tests | 156 |
+| Python files | 102 |
+| Lines of code | 18,198 |
+| Unit tests | 166 |
 | Integration tests | 7 (mock server) |
 | Providers | 4 (Anthropic, OpenAI, xAI, Ollama) |
 | Built-in tools | 13 |

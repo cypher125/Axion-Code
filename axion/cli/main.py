@@ -1481,10 +1481,31 @@ def cli(
     if ctx.invoked_subcommand is not None:
         return
 
-    if prompt:
-        exit_code = asyncio.run(run_one_shot(prompt, model, permission_mode, output_format))
-    else:
-        exit_code = asyncio.run(run_repl(model, permission_mode, resume, output_format, budget))
+    try:
+        if prompt:
+            exit_code = asyncio.run(run_one_shot(prompt, model, permission_mode, output_format))
+        else:
+            exit_code = asyncio.run(run_repl(model, permission_mode, resume, output_format, budget))
+    except Exception as exc:
+        error_msg = str(exc)
+        if "credentials" in error_msg.lower() or "api key" in error_msg.lower():
+            console.print()
+            console.print("[bold red]No API key configured.[/bold red]")
+            console.print()
+            console.print("Set one of these to get started:")
+            console.print("  [cyan]export ANTHROPIC_API_KEY=sk-ant-...[/cyan]   (Claude)")
+            console.print("  [cyan]export OPENAI_API_KEY=sk-...[/cyan]          (GPT)")
+            console.print("  [cyan]export XAI_API_KEY=xai-...[/cyan]            (Grok)")
+            console.print()
+            console.print("Or use a local model with Ollama (no API key needed):")
+            console.print("  [cyan]ollama pull llama3.1[/cyan]")
+            console.print("  [cyan]axion -m llama3.1[/cyan]")
+            console.print()
+            console.print("Run [bold]axion doctor[/bold] to check your setup.")
+            exit_code = 1
+        else:
+            console.print(f"[red]Error: {error_msg}[/red]")
+            exit_code = 1
 
     sys.exit(exit_code)
 
