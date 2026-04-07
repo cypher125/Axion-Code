@@ -391,6 +391,17 @@ class ConversationRuntime:
 
                 self._trace("assistant_iteration_started", {"iteration": iteration})
 
+                # Pre-check budget before making an API call
+                if self.cost_budget_usd is not None and iteration > 1:
+                    current_cost = self.usage_tracker.total.estimate_cost_usd()
+                    remaining = self.cost_budget_usd - current_cost.total_cost_usd()
+                    if remaining <= 0:
+                        summary.text_output += (
+                            f"\n\n[Budget reached: ${current_cost.total_cost_usd():.4f} "
+                            f"of ${self.cost_budget_usd:.4f}. Stopping before next API call.]"
+                        )
+                        break
+
                 # Stream one model response
                 stream_result = await self._stream_model_response(api_messages)
 
@@ -399,15 +410,20 @@ class ConversationRuntime:
                 self.usage_tracker.record_turn(stream_result.usage)
                 cumulative_input_tokens += stream_result.usage.input_tokens
 
-                # Check cost budget
+                # Check cost budget — soft stop (don't crash, just stop looping)
                 if self.cost_budget_usd is not None:
                     total_cost = self.usage_tracker.total.estimate_cost_usd()
                     if total_cost.total_cost_usd() >= self.cost_budget_usd:
-                        raise ConversationError(
-                            f"Cost budget exceeded: ${total_cost.total_cost_usd():.4f} >= "
-                            f"${self.cost_budget_usd:.4f} budget. "
-                            f"Use /cost to see breakdown or increase the budget."
+                        logger.info(
+                            "Cost budget reached: $%.4f >= $%.4f",
+                            total_cost.total_cost_usd(), self.cost_budget_usd,
                         )
+                        summary.text_output += (
+                            f"\n\n[Budget reached: ${total_cost.total_cost_usd():.4f} "
+                            f"of ${self.cost_budget_usd:.4f}. "
+                            f"Use /cost for details or restart with a higher --budget.]"
+                        )
+                        break  # Stop the tool loop gracefully
 
                 # Collect prompt cache events
                 if stream_result.prompt_cache_event:
