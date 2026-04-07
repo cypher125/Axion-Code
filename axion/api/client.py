@@ -18,12 +18,12 @@ from axion.api.types import MessageRequest, MessageResponse, StreamEvent
 MODEL_ALIASES: dict[str, str] = {
     "opus": "claude-opus-4-6",
     "sonnet": "claude-sonnet-4-6",
-    "haiku": "claude-haiku-4-5-20251001",
+    "haiku": "claude-haiku-4-5",
     "local": "llama3.1",
     # Claude Code format aliases (e.g. "opus[1m]", "sonnet[1m]")
     "opus[1m]": "claude-opus-4-6",
     "sonnet[1m]": "claude-sonnet-4-6",
-    "haiku[1m]": "claude-haiku-4-5-20251001",
+    "haiku[1m]": "claude-haiku-4-5",
 }
 
 
@@ -73,7 +73,7 @@ def detect_provider_kind(model: str) -> ProviderKind:
 MAX_TOKENS_FOR_MODEL: dict[str, int] = {
     "claude-opus-4-6": 32_000,
     "claude-sonnet-4-6": 64_000,
-    "claude-haiku-4-5-20251001": 64_000,
+    "claude-haiku-4-5": 64_000,
 }
 
 DEFAULT_MAX_TOKENS = 16_000

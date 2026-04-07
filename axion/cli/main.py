@@ -515,9 +515,11 @@ async def run_one_shot(
                     if isinstance(block, ToolResultBlock):
                         _render_tool_result(block.tool_name, block.output, block.is_error)
 
-            # Print usage
+            # Print usage (model-specific pricing)
             if summary.usage.total_tokens() > 0:
-                cost = summary.usage.estimate_cost_usd()
+                from axion.runtime.usage import pricing_for_model
+                mp = pricing_for_model(runtime.model)
+                cost = summary.usage.estimate_cost_usd_with_pricing(mp) if mp else summary.usage.estimate_cost_usd()
                 console.print(
                     f"\n[dim]Tokens: {summary.usage.total_tokens()} | "
                     f"Cost: {format_usd(cost.total_cost_usd())} | "
@@ -577,7 +579,7 @@ async def _handle_slash_command(
 
     # --- Cost ---
     if cmd == "cost":
-        lines = runtime.usage_tracker.summary_lines()
+        lines = runtime.usage_tracker.total.summary_lines("Session total", model=runtime.model)
         return "\n".join(lines)
 
     # --- Status ---
@@ -1347,9 +1349,14 @@ async def run_repl(
                     console.print()  # Newline after streaming
                     # Tool use/results are now shown in real-time via callbacks
 
-                    # Cost line
+                    # Cost line (use model-specific pricing)
                     if summary.usage.total_tokens() > 0:
-                        cost = summary.usage.estimate_cost_usd()
+                        from axion.runtime.usage import pricing_for_model
+                        model_pricing = pricing_for_model(runtime.model)
+                        if model_pricing:
+                            cost = summary.usage.estimate_cost_usd_with_pricing(model_pricing)
+                        else:
+                            cost = summary.usage.estimate_cost_usd()
                         console.print(
                             f"[dim]Tokens: {summary.usage.total_tokens():,} | "
                             f"Cost: {format_usd(cost.total_cost_usd())} | "
