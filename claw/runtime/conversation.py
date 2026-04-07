@@ -37,7 +37,7 @@ from claw.api.types import (
     InputJsonDelta,
     Usage,
 )
-from claw.api.client import ProviderClient, max_tokens_for_model, resolve_model_alias
+from claw.api.client import ProviderClient, max_tokens_for_model, resolve_model_alias, MAX_TOKENS_FOR_MODEL
 from claw.runtime.compact import (
     CompactionConfig,
     CompactionResult,
@@ -73,6 +73,13 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_AUTO_COMPACTION_THRESHOLD = 100_000
 _ENV_COMPACTION_KEY = "CLAUDE_CODE_AUTO_COMPACT_INPUT_TOKENS"
+
+# Context window sizes per model family (in tokens)
+_CONTEXT_WINDOWS: dict[str, int] = {
+    "claude-opus": 200_000,
+    "claude-sonnet": 200_000,
+    "claude-haiku": 200_000,
+}
 
 
 # ---------------------------------------------------------------------------
@@ -199,6 +206,10 @@ class PermissionDeniedError(ConversationError):
     """Raised when a tool is denied by permission policy or hooks."""
 
 
+class ContextWindowExceededError(ConversationError):
+    """Raised when estimated tokens exceed the model's context window."""
+
+
 # ---------------------------------------------------------------------------
 # Conversation runtime
 # ---------------------------------------------------------------------------
@@ -309,6 +320,39 @@ class ConversationRuntime:
         """Estimate the current token count of the session."""
         return estimate_session_tokens(self.session)
 
+    # -- Preflight check -----------------------------------------------------
+
+    def _preflight_check(self) -> None:
+        """Estimate token count and raise if it would exceed the model's context window.
+
+        Uses ~4 chars/token heuristic for the system prompt + messages.
+        """
+        # Estimate system prompt tokens
+        system_tokens = len(self.system_prompt) // 4 if self.system_prompt else 0
+
+        # Estimate message tokens
+        message_tokens = estimate_session_tokens(self.session)
+
+        estimated_total = system_tokens + message_tokens
+
+        # Look up context window by model family prefix
+        resolved = resolve_model_alias(self.model)
+        context_window = 200_000  # default
+        for prefix, window in _CONTEXT_WINDOWS.items():
+            if resolved.startswith(prefix):
+                context_window = window
+                break
+
+        # Get max output tokens for the model
+        output_tokens = max_tokens_for_model(resolved)
+
+        if estimated_total + output_tokens > context_window:
+            raise ContextWindowExceededError(
+                f"Estimated {estimated_total} input tokens + {output_tokens} max output tokens "
+                f"= {estimated_total + output_tokens} exceeds context window of {context_window} "
+                f"for model {resolved}. Consider compacting the session."
+            )
+
     # -- Main turn loop ------------------------------------------------------
 
     async def run_turn(self, user_input: str) -> TurnSummary:
@@ -325,6 +369,9 @@ class ConversationRuntime:
         summary = TurnSummary()
         iteration = 0
         cumulative_input_tokens = 0
+
+        # Preflight: ensure we won't exceed the context window
+        self._preflight_check()
 
         try:
             api_messages = self._build_api_messages()

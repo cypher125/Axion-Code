@@ -114,7 +114,7 @@ class AnthropicClient:
         headers: dict[str, str] = {
             "content-type": "application/json",
             "anthropic-version": DEFAULT_ANTHROPIC_VERSION,
-            "anthropic-beta": f"{DEFAULT_AGENTIC_BETA},{DEFAULT_PROMPT_CACHING_SCOPE_BETA}",
+            "anthropic-beta": f"prompt-caching-2024-07-31,{DEFAULT_AGENTIC_BETA},{DEFAULT_PROMPT_CACHING_SCOPE_BETA}",
             "user-agent": "claw-code/0.1.0",
         }
         if self.auth.api_key:
@@ -128,6 +128,29 @@ class AnthropicClient:
         request.stream = False
         return await self._send_with_retry(request)
 
+    @staticmethod
+    def _apply_prompt_caching(body: dict) -> dict:
+        """Add cache_control to the system message for prompt caching.
+
+        Transforms a plain system string into the block format required
+        by the Anthropic prompt caching API.
+        """
+        if "system" in body and body["system"] is not None:
+            system_value = body["system"]
+            if isinstance(system_value, str):
+                body["system"] = [
+                    {
+                        "type": "text",
+                        "text": system_value,
+                        "cache_control": {"type": "ephemeral"},
+                    }
+                ]
+            elif isinstance(system_value, list):
+                # Already block format; add cache_control to the last block
+                if system_value:
+                    system_value[-1]["cache_control"] = {"type": "ephemeral"}
+        return body
+
     async def stream_message(
         self, request: MessageRequest
     ) -> AsyncIterator[StreamEvent]:
@@ -135,7 +158,7 @@ class AnthropicClient:
         request.stream = True
         client = await self._get_client()
         headers = self._build_headers()
-        body = request.to_dict()
+        body = self._apply_prompt_caching(request.to_dict())
 
         async with client.stream(
             "POST",
@@ -191,7 +214,7 @@ class AnthropicClient:
         """Send a single request without retry."""
         client = await self._get_client()
         headers = self._build_headers()
-        body = request.to_dict()
+        body = self._apply_prompt_caching(request.to_dict())
 
         try:
             response = await client.post(

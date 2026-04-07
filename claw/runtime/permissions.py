@@ -6,8 +6,13 @@ Maps to: rust/crates/runtime/src/permissions.rs
 from __future__ import annotations
 
 import enum
+import json
+import logging
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Protocol, runtime_checkable
+
+logger = logging.getLogger(__name__)
 
 
 class PermissionMode(enum.Enum):
@@ -102,6 +107,13 @@ TOOL_PERMISSION_REQUIREMENTS: dict[str, PermissionMode] = {
 # Permission policy
 # ---------------------------------------------------------------------------
 
+class PermissionDecisionKind(enum.Enum):
+    """Distinguishes one-time vs persistent permission decisions."""
+    ALLOW_ONCE = "allow_once"
+    ALLOW_ALWAYS = "allow_always"
+    DENY = "deny"
+
+
 @dataclass
 class PermissionPolicy:
     """Evaluates whether tool execution is allowed.
@@ -112,6 +124,60 @@ class PermissionPolicy:
     mode: PermissionMode = PermissionMode.ALLOW
     allow_rules: list[str] = field(default_factory=list)
     deny_rules: list[str] = field(default_factory=list)
+    _decision_cache: dict[str, PermissionOutcome] = field(
+        default_factory=dict, repr=False
+    )
+
+    def remember_decision(
+        self,
+        tool_name: str,
+        outcome: PermissionOutcome,
+        *,
+        kind: PermissionDecisionKind = PermissionDecisionKind.ALLOW_ALWAYS,
+    ) -> None:
+        """Cache a permission decision for a tool.
+
+        Only ``ALLOW_ALWAYS`` decisions are cached; ``ALLOW_ONCE`` is not
+        stored (it applies only to the current invocation).
+        """
+        if kind == PermissionDecisionKind.ALLOW_ONCE:
+            return
+        key = f"{tool_name}:{self.mode.value}"
+        self._decision_cache[key] = outcome
+
+    def persist_decisions(self, path: Path) -> None:
+        """Save cached decisions to a JSON file."""
+        serializable: dict[str, dict[str, str]] = {}
+        for key, outcome in self._decision_cache.items():
+            if isinstance(outcome, PermissionAllow):
+                serializable[key] = {"outcome": "allow"}
+            elif isinstance(outcome, PermissionDeny):
+                serializable[key] = {"outcome": "deny", "reason": outcome.reason}
+
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(serializable, indent=2), encoding="utf-8")
+        logger.debug("Persisted %d permission decisions to %s", len(serializable), path)
+
+    def load_decisions(self, path: Path) -> None:
+        """Load cached decisions from a JSON file."""
+        if not path.is_file():
+            return
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError) as exc:
+            logger.warning("Failed to load permission decisions from %s: %s", path, exc)
+            return
+
+        for key, value in data.items():
+            outcome_str = value.get("outcome", "")
+            if outcome_str == "allow":
+                self._decision_cache[key] = PermissionAllow()
+            elif outcome_str == "deny":
+                self._decision_cache[key] = PermissionDeny(
+                    reason=value.get("reason", "persisted deny")
+                )
+
+        logger.debug("Loaded %d permission decisions from %s", len(self._decision_cache), path)
 
     def authorize(
         self,
@@ -120,6 +186,11 @@ class PermissionPolicy:
         prompter: PermissionPrompter | None = None,
     ) -> PermissionOutcome:
         """Check if a tool invocation is allowed under current policy."""
+        # Check decision cache first
+        cache_key = f"{tool_name}:{self.mode.value}"
+        if cache_key in self._decision_cache:
+            return self._decision_cache[cache_key]
+
         # Explicit deny rules
         for rule in self.deny_rules:
             if self._matches_rule(rule, tool_name):

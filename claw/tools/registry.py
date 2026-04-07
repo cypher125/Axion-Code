@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -286,16 +287,60 @@ class BuiltinToolExecutor:
     Implements the ToolExecutor protocol from conversation.py.
     """
 
-    def __init__(self, cwd: str | None = None) -> None:
+    def __init__(
+        self,
+        cwd: str | None = None,
+        hook_runner: Any | None = None,
+    ) -> None:
         self.cwd = cwd
+        self.hook_runner = hook_runner  # Optional HookRunner instance
 
     async def execute(self, tool_name: str, tool_input: str) -> str:
-        """Execute a tool and return the result as a string."""
+        """Execute a tool and return the result as a string.
+
+        If a hook_runner is attached, pre/post tool-use hooks are invoked
+        around the actual tool execution.
+        """
+        # --- Pre-tool-use hook ---
+        if self.hook_runner is not None:
+            pre_result = await self.hook_runner.run_pre_tool_use(tool_name, tool_input)
+            if pre_result.denied:
+                deny_msg = "; ".join(pre_result.messages) or "Denied by pre-tool-use hook"
+                return f"Hook denied: {deny_msg}"
+
         try:
             params = json.loads(tool_input) if tool_input else {}
         except json.JSONDecodeError:
             params = {}
 
+        is_error = False
+        try:
+            result = await self._dispatch(tool_name, params)
+        except Exception as exc:
+            is_error = True
+            result = f"Tool error: {exc}"
+            # --- Post-tool-use failure hook ---
+            if self.hook_runner is not None:
+                fail_result = await self.hook_runner.run_post_tool_use_failure(
+                    tool_name, tool_input, str(exc)
+                )
+                if fail_result.messages:
+                    result += "\n" + "\n".join(f"[hook] {m}" for m in fail_result.messages)
+            return result
+
+        # --- Post-tool-use hook ---
+        if self.hook_runner is not None:
+            post_result = await self.hook_runner.run_post_tool_use(
+                tool_name, tool_input, result, is_error=False
+            )
+            if post_result.denied:
+                deny_msg = "; ".join(post_result.messages) or "Denied by post-tool-use hook"
+                return f"Post-hook error: {deny_msg}\nOriginal output: {result}"
+
+        return result
+
+    async def _dispatch(self, tool_name: str, params: dict[str, Any]) -> str:
+        """Dispatch to the appropriate tool handler."""
         match tool_name:
             case "Bash":
                 return await self._exec_bash(params)
@@ -309,6 +354,18 @@ class BuiltinToolExecutor:
                 return self._exec_glob(params)
             case "Grep":
                 return self._exec_grep(params)
+            case "WebFetch":
+                return await self._exec_web_fetch(params)
+            case "WebSearch":
+                return await self._exec_web_search(params)
+            case "TodoWrite":
+                return self._exec_todo_write(params)
+            case "Agent":
+                return await self._exec_agent(params)
+            case "NotebookEdit":
+                return self._exec_notebook_edit(params)
+            case "Skill":
+                return self._exec_skill(params)
             case _:
                 return f"Tool '{tool_name}' is not yet implemented in the Python port."
 
@@ -399,3 +456,310 @@ class BuiltinToolExecutor:
         if result.truncated:
             lines.append("  ... (results truncated)")
         return "\n".join(lines)
+
+    # -----------------------------------------------------------------------
+    # WebFetch — actually fetches URLs using httpx
+    # -----------------------------------------------------------------------
+
+    @staticmethod
+    async def _exec_web_fetch(params: dict[str, Any]) -> str:
+        """Fetch content from a URL."""
+        import httpx
+
+        url = params.get("url", "")
+        if not url:
+            return "Error: url parameter is required"
+
+        try:
+            async with httpx.AsyncClient(
+                timeout=30.0,
+                follow_redirects=True,
+                headers={"User-Agent": "Axion-Code/0.1.0"},
+            ) as client:
+                response = await client.get(url)
+                content_type = response.headers.get("content-type", "")
+
+                if response.status_code != 200:
+                    return f"HTTP {response.status_code}: {response.reason_phrase}"
+
+                # Handle text content
+                if "text/" in content_type or "json" in content_type or "xml" in content_type:
+                    text = response.text
+                    # Truncate very long responses
+                    if len(text) > 50_000:
+                        text = text[:50_000] + "\n\n[Content truncated at 50,000 characters]"
+                    return text
+
+                # Binary content — return metadata
+                size = len(response.content)
+                return (
+                    f"Binary content ({content_type}), {size:,} bytes.\n"
+                    f"Cannot display binary content as text."
+                )
+
+        except httpx.TimeoutException:
+            return f"Error: Request to {url} timed out after 30 seconds"
+        except httpx.HTTPError as exc:
+            return f"Error fetching {url}: {exc}"
+
+    # -----------------------------------------------------------------------
+    # WebSearch — uses DuckDuckGo HTML search (no API key needed)
+    # -----------------------------------------------------------------------
+
+    @staticmethod
+    async def _exec_web_search(params: dict[str, Any]) -> str:
+        """Search the web using DuckDuckGo."""
+        import httpx
+        import re
+
+        query = params.get("query", "")
+        if not query:
+            return "Error: query parameter is required"
+
+        try:
+            async with httpx.AsyncClient(
+                timeout=15.0,
+                follow_redirects=True,
+                headers={
+                    "User-Agent": "Mozilla/5.0 (compatible; Axion-Code/0.1.0)",
+                },
+            ) as client:
+                # Use DuckDuckGo HTML lite (no API key required)
+                response = await client.get(
+                    "https://html.duckduckgo.com/html/",
+                    params={"q": query},
+                )
+
+                if response.status_code != 200:
+                    return f"Search failed: HTTP {response.status_code}"
+
+                html = response.text
+
+                # Extract results from DuckDuckGo HTML
+                results: list[str] = []
+
+                # Find result blocks
+                result_pattern = re.compile(
+                    r'<a[^>]*class="result__a"[^>]*href="([^"]*)"[^>]*>(.*?)</a>.*?'
+                    r'<a[^>]*class="result__snippet"[^>]*>(.*?)</a>',
+                    re.DOTALL,
+                )
+
+                for match in result_pattern.finditer(html):
+                    url = match.group(1)
+                    title = re.sub(r"<[^>]+>", "", match.group(2)).strip()
+                    snippet = re.sub(r"<[^>]+>", "", match.group(3)).strip()
+
+                    if title and url:
+                        results.append(f"**{title}**\n  {url}\n  {snippet}\n")
+
+                    if len(results) >= 10:
+                        break
+
+                # Fallback: try simpler pattern
+                if not results:
+                    link_pattern = re.compile(
+                        r'<a[^>]*class="result__a"[^>]*>(.*?)</a>', re.DOTALL
+                    )
+                    for match in link_pattern.finditer(html):
+                        title = re.sub(r"<[^>]+>", "", match.group(1)).strip()
+                        if title:
+                            results.append(f"- {title}")
+                        if len(results) >= 10:
+                            break
+
+                if not results:
+                    return f"No results found for: {query}"
+
+                header = f"Search results for: {query}\n\n"
+                return header + "\n".join(results)
+
+        except httpx.TimeoutException:
+            return "Error: Search request timed out"
+        except httpx.HTTPError as exc:
+            return f"Error performing search: {exc}"
+
+    # -----------------------------------------------------------------------
+    # TodoWrite — manages a task list
+    # -----------------------------------------------------------------------
+
+    _todo_list: list[dict[str, str]] = []
+
+    @classmethod
+    def _exec_todo_write(cls, params: dict[str, Any]) -> str:
+        """Create and manage a structured task list."""
+        todos = params.get("todos", [])
+        if not todos:
+            return "No todos provided."
+
+        cls._todo_list = []
+        for todo in todos:
+            cls._todo_list.append({
+                "content": todo.get("content", ""),
+                "status": todo.get("status", "pending"),
+                "activeForm": todo.get("activeForm", ""),
+            })
+
+        # Format output
+        lines = ["Task list updated:", ""]
+        for i, todo in enumerate(cls._todo_list, 1):
+            status = todo["status"]
+            icon = {"pending": "○", "in_progress": "◉", "completed": "✓"}.get(status, "?")
+            lines.append(f"  {icon} {i}. [{status}] {todo['content']}")
+
+        return "\n".join(lines)
+
+    @classmethod
+    def get_todo_list(cls) -> list[dict[str, str]]:
+        """Get the current todo list."""
+        return list(cls._todo_list)
+
+    # -----------------------------------------------------------------------
+    # Agent — spawns a sub-agent as a subprocess
+    # -----------------------------------------------------------------------
+
+    async def _exec_agent(self, params: dict[str, Any]) -> str:
+        """Launch a sub-agent to handle complex tasks.
+
+        Spawns a new claw process with the agent's prompt, runs it, and returns
+        the result. This provides context isolation — the sub-agent gets a fresh
+        conversation.
+        """
+        import asyncio
+        import sys
+
+        prompt_text = params.get("prompt", "")
+        description = params.get("description", "agent task")
+        model = params.get("model")
+
+        if not prompt_text:
+            return "Error: prompt parameter is required"
+
+        # Build the sub-agent command
+        cmd = [sys.executable, "-m", "claw.cli.main", "-p", prompt_text]
+        if model:
+            cmd.extend(["-m", model])
+        cmd.extend(["--output-format", "json"])
+
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=self.cwd,
+                env={**os.environ},
+            )
+
+            stdout, stderr = await asyncio.wait_for(
+                process.communicate(), timeout=300.0,  # 5 min timeout
+            )
+
+            output = stdout.decode("utf-8", errors="replace")
+
+            # Try to parse JSON output and extract the message
+            try:
+                data = json.loads(output)
+                return data.get("message", output)
+            except json.JSONDecodeError:
+                return output if output.strip() else f"Agent completed with no output. stderr: {stderr.decode()[:500]}"
+
+        except asyncio.TimeoutError:
+            return f"Agent timed out after 300 seconds. Task: {description}"
+        except Exception as exc:
+            return f"Agent execution failed: {exc}"
+
+    # -----------------------------------------------------------------------
+    # NotebookEdit — edits Jupyter notebook cells
+    # -----------------------------------------------------------------------
+
+    @staticmethod
+    def _exec_notebook_edit(params: dict[str, Any]) -> str:
+        """Edit a Jupyter notebook cell."""
+        notebook_path = params.get("notebook_path", "")
+        cell_index = params.get("cell_index")
+        new_source = params.get("new_source", "")
+        cell_type = params.get("cell_type", "code")
+        operation = params.get("operation", "replace")  # replace, insert, delete
+
+        if not notebook_path:
+            return "Error: notebook_path is required"
+
+        from pathlib import Path
+
+        path = Path(notebook_path)
+        if not path.exists():
+            return f"Error: Notebook not found: {notebook_path}"
+
+        try:
+            nb_data = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError) as exc:
+            return f"Error reading notebook: {exc}"
+
+        cells = nb_data.get("cells", [])
+
+        if operation == "replace" and cell_index is not None:
+            if cell_index < 0 or cell_index >= len(cells):
+                return f"Error: cell_index {cell_index} out of range (0-{len(cells) - 1})"
+            cells[cell_index]["source"] = new_source.splitlines(keepends=True)
+            if cell_type:
+                cells[cell_index]["cell_type"] = cell_type
+
+        elif operation == "insert":
+            insert_at = cell_index if cell_index is not None else len(cells)
+            new_cell = {
+                "cell_type": cell_type,
+                "source": new_source.splitlines(keepends=True),
+                "metadata": {},
+            }
+            if cell_type == "code":
+                new_cell["outputs"] = []
+                new_cell["execution_count"] = None
+            cells.insert(insert_at, new_cell)
+
+        elif operation == "delete" and cell_index is not None:
+            if cell_index < 0 or cell_index >= len(cells):
+                return f"Error: cell_index {cell_index} out of range"
+            cells.pop(cell_index)
+
+        else:
+            return f"Error: unsupported operation '{operation}'"
+
+        nb_data["cells"] = cells
+        path.write_text(json.dumps(nb_data, indent=1, ensure_ascii=False), encoding="utf-8")
+
+        return f"Notebook {operation}d cell at index {cell_index} in {notebook_path}"
+
+    # -----------------------------------------------------------------------
+    # Skill — loads and executes skill definitions
+    # -----------------------------------------------------------------------
+
+    def _exec_skill(self, params: dict[str, Any]) -> str:
+        """Load and execute a skill by name or path."""
+        from pathlib import Path
+        from claw.runtime.skills import execute_skill, load_skill, resolve_skill
+
+        skill_name = params.get("skill", params.get("name", ""))
+        user_args = params.get("args", "")
+
+        if not skill_name:
+            return "Error: skill name is required"
+
+        # Try to resolve by name from conventional directories
+        cwd = Path(self.cwd) if self.cwd else Path.cwd()
+        skill_path = resolve_skill(skill_name, cwd)
+
+        # Fallback: treat as direct path
+        if skill_path is None:
+            candidate = Path(skill_name)
+            if candidate.is_file():
+                skill_path = candidate
+
+        if skill_path is None:
+            return f"Error: skill '{skill_name}' not found"
+
+        try:
+            skill = load_skill(skill_path)
+        except Exception as exc:
+            return f"Error loading skill '{skill_name}': {exc}"
+
+        return execute_skill(skill, user_args)
