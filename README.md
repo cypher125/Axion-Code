@@ -110,6 +110,62 @@ All tools are automatically sent to the model with every request, so the AI can 
 /diff          Show current git changes
 ```
 
+### Real-Time Tool Display
+
+When the AI uses tools (reading files, running commands, searching), you see it happening live:
+
+```
+╭─ Bash ─────────────────────────────────────────────────╮
+│  command: git status --short
+╰────────────────────────────────────────────────────────╯
+✓ Bash
+  ## main
+  M  src/auth.py
+
+╭─ Edit ─────────────────────────────────────────────────╮
+│  file_path: src/auth.py
+│  old_string: 'return None'
+│  new_string: 'return token'
+╰────────────────────────────────────────────────────────╯
+✓ Edit
+  Replaced 1 occurrence(s) in src/auth.py
+```
+
+Tool calls display **before** execution, results display **after** — you always know what the AI is doing.
+
+### Interactive Permission Prompting
+
+When using `--permission-mode prompt`, dangerous operations require your approval:
+
+```
+Permission required
+  Tool: Bash
+  Mode: prompt → needs workspace-write
+  Input: {"command": "rm -rf /tmp/old"}
+
+Allow? [y/N/a(lways)]: a
+Allowed (always for this tool).
+```
+
+Three choices: `y` (allow once), `a` (allow always — remembered for this tool), `N` (deny). Permission decisions are cached so you won't be asked again for the same tool.
+
+### Session Persistence & Resume
+
+Every conversation is automatically saved. Pick up where you left off:
+
+```bash
+# Resume the last session
+axion --resume latest
+
+# Resume by session ID (or partial ID)
+axion --resume abc123
+
+# List all saved sessions
+axion session list
+```
+
+Sessions are stored as JSONL files in `.axion/sessions/` with automatic rotation at 256KB.
+
 ### Streaming Markdown Rendering
 
 Responses are rendered as markdown in real-time — headings get colored, code blocks get syntax highlighted, and links are formatted. The renderer buffers text until safe boundaries (outside code fences) before rendering, so code blocks are never split mid-render.
@@ -117,10 +173,10 @@ Responses are rendered as markdown in real-time — headings get colored, code b
 ### Error Recovery
 
 Axion handles errors gracefully without crashing the REPL:
-- **Context window exceeded**: Shows token usage, suggests `/compact` or `/clear`
+- **Context window exceeded**: Shows token usage percentage, suggests `/compact` or `/clear`
 - **Authentication errors**: Suggests checking API key or running `/login`
 - **Connection errors**: Suggests checking internet connection
-- **Interrupted turns**: Resets cleanly, ready for next prompt
+- **Interrupted turns** (Ctrl+C): Resets cleanly, ready for next prompt
 
 ### Prompt Caching
 
@@ -147,8 +203,9 @@ axion/
     input          Tab completion, key bindings, multiline input
   runtime/       Core engine (22 modules)
     conversation   Agentic loop: stream → tools → hooks → compact → loop
-    session        JSONL persistence with rotation (256KB files)
-    permissions    Mode-based access control with decision persistence
+                   Real-time tool use/result callbacks for live display
+    session        JSONL persistence with rotation, resume by ID/latest
+    permissions    Interactive [y/N/a] prompting, decision caching, persistence
     config         3-layer merge with 6 MCP transport types
     hooks          Pre/post/failure hooks via subprocess
     mcp/           Model Context Protocol (stdio, SSE, HTTP, WebSocket, SDK)
@@ -292,12 +349,13 @@ GitHub Actions runs on every push and PR:
 | Metric | Value |
 |---|---|
 | Python files | 100 |
-| Lines of code | 17,564 |
+| Lines of code | 17,653 |
 | Unit tests | 156 |
 | Integration tests | 7 (mock server) |
 | Providers | 4 (Anthropic, OpenAI, xAI, Ollama) |
 | Built-in tools | 13 |
 | Slash commands | 60+ |
+| CI matrix | 9 jobs (3 OS x 3 Python) |
 | Min Python | 3.11 |
 
 ## Author
