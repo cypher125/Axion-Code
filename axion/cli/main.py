@@ -1380,12 +1380,19 @@ async def run_repl(
                 elif "api key" in error_msg.lower() or "credentials" in error_msg.lower():
                     console.print(f"[red]Authentication error: {error_msg}[/red]")
                     console.print("[dim]Check your ANTHROPIC_API_KEY or run /login[/dim]")
-                elif "timeout" in error_msg.lower() or "connect" in error_msg.lower():
-                    console.print(f"[yellow]Connection error: {error_msg}[/yellow]")
+                elif any(
+                    kw in error_msg.lower()
+                    for kw in ("timeout", "connect", "readerror", "read error", "network", "httpx")
+                ) or any(
+                    isinstance(exc.__cause__, t)
+                    for t in (ConnectionError, OSError, TimeoutError)
+                    if exc.__cause__
+                ):
+                    console.print(f"[yellow]Connection error: {error_msg or 'Network request failed'}[/yellow]")
                     console.print("[dim]Check your internet connection and try again.[/dim]")
                 else:
                     console.print(f"\n[red]Error: {error_msg}[/red]")
-                logger.exception("Error during turn")
+                logger.debug("Error during turn", exc_info=True)
 
             finally:
                 # Restore original callbacks
