@@ -68,6 +68,7 @@ from axion.runtime.permissions import (
     PermissionMode,
     PermissionPolicy,
     PermissionPromptDecision,
+    PermissionRequest,
 )
 from axion.runtime.prompt import SystemPromptBuilder
 from axion.runtime.sandbox import detect_sandbox
@@ -178,20 +179,47 @@ def _git_status_short() -> str | None:
     return None
 
 
-def _prompt_permission(tool_name: str, tool_input: str) -> PermissionPromptDecision:
-    """Interactive y/N prompt when a tool needs elevated permissions."""
-    console.print("\n[bold yellow]Permission required[/bold yellow]")
-    console.print(f"  Tool: [bold]{tool_name}[/bold]")
-    if tool_input:
-        display = tool_input[:300] + "..." if len(tool_input) > 300 else tool_input
-        console.print(f"  Input: [dim]{display}[/dim]")
-    try:
-        answer = console.input("[yellow]Allow? [y/N]: [/yellow]").strip().lower()
-    except (EOFError, KeyboardInterrupt):
+class CliPermissionPrompter:
+    """Interactive permission prompter for the CLI REPL.
+
+    Shows tool details and asks [y/N/a] where:
+      y = allow this once
+      a = allow always (remember for this tool)
+      N = deny (default)
+
+    Implements the PermissionPrompter protocol.
+    """
+
+    async def decide(self, request: PermissionRequest) -> PermissionPromptDecision:
+        """Show an interactive prompt and wait for user decision."""
+        console.print()
+        console.print("[bold yellow]Permission required[/bold yellow]")
+        console.print(f"  Tool: [bold]{request.tool_name}[/bold]")
+        console.print(f"  Mode: {request.current_mode.value} → needs {request.required_mode.value}")
+        if request.reason:
+            console.print(f"  Reason: {request.reason}")
+        if request.input_json:
+            display = request.input_json[:300]
+            if len(request.input_json) > 300:
+                display += "..."
+            console.print(f"  Input: [dim]{display}[/dim]")
+        console.print()
+
+        try:
+            answer = console.input("[yellow]Allow? [y/N/a(lways)]: [/yellow]").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            console.print("[dim]Denied.[/dim]")
+            return PermissionPromptDecision.DENY
+
+        if answer in ("y", "yes"):
+            console.print("[green]Allowed (once).[/green]")
+            return PermissionPromptDecision.ALLOW
+        if answer in ("a", "always"):
+            console.print("[green]Allowed (always for this tool).[/green]")
+            return PermissionPromptDecision.ALLOW
+
+        console.print("[dim]Denied.[/dim]")
         return PermissionPromptDecision.DENY
-    if answer in ("y", "yes"):
-        return PermissionPromptDecision.ALLOW
-    return PermissionPromptDecision.DENY
 
 
 def _render_tool_use(tool_name: str, tool_input: str) -> None:
@@ -364,9 +392,12 @@ def _build_runtime(
         provider=provider,
         tool_executor=tool_executor,
         permission_policy=policy,
+        permission_prompter=CliPermissionPrompter(),
         system_prompt=system_prompt,
         model=effective_model,
         on_text_delta=on_text_delta,
+        on_tool_use=on_tool_use,
+        on_tool_result=on_tool_result,
     )
 
     return runtime, provider
@@ -937,7 +968,7 @@ async def run_repl(
     session_path = _session_path_for_id(session.session_id)
     session.with_persistence_path(session_path)
 
-    # Build runtime with markdown streaming
+    # Build runtime with markdown streaming and real-time tool display
     text_buffer: list[str] = []
     repl_md_stream = MarkdownStreamState()
 
@@ -949,12 +980,30 @@ async def run_repl(
         if rendered:
             console.print(Markdown(rendered), end="")
 
+    def on_tool_use_cb(tool_name: str, tool_input: str) -> None:
+        """Show tool invocation in real-time as it happens."""
+        if output_format == "json":
+            return
+        # Flush any pending markdown before showing tool
+        remaining = repl_md_stream.flush(renderer)
+        if remaining:
+            console.print(Markdown(remaining))
+        _render_tool_use(tool_name, tool_input)
+
+    def on_tool_result_cb(tool_name: str, output: str, is_error: bool) -> None:
+        """Show tool result in real-time as it completes."""
+        if output_format == "json":
+            return
+        _render_tool_result(tool_name, output, is_error)
+
     runtime, provider = _build_runtime(
         model=model,
         permission_mode=permission_mode,
         session=session,
         config=config,
         on_text_delta=on_text_delta,
+        on_tool_use=on_tool_use_cb,
+        on_tool_result=on_tool_result_cb,
     )
 
     # Restore usage tracker from resumed session
@@ -1033,18 +1082,7 @@ async def run_repl(
                     click.echo(json.dumps(json_out))
                 else:
                     console.print()  # Newline after streaming
-
-                    # Display tool use/results for this turn
-                    for msg in summary.assistant_messages:
-                        for block in msg.blocks:
-                            if isinstance(block, ToolUseBlock):
-                                _render_tool_use(block.name, block.input)
-                    for msg in summary.tool_results:
-                        for block in msg.blocks:
-                            if isinstance(block, ToolResultBlock):
-                                _render_tool_result(
-                                    block.tool_name, block.output, block.is_error
-                                )
+                    # Tool use/results are now shown in real-time via callbacks
 
                     # Cost line
                     if summary.usage.total_tokens() > 0:

@@ -48,12 +48,16 @@ from axion.runtime.compact import (
 )
 from axion.runtime.hooks import HookRunner
 from axion.runtime.permissions import (
+    TOOL_PERMISSION_REQUIREMENTS,
     PermissionAllow,
     PermissionDeny,
+    PermissionMode,
     PermissionOutcome,
     PermissionOverride,
     PermissionPolicy,
+    PermissionPromptDecision,
     PermissionPrompter,
+    PermissionRequest,
 )
 from axion.runtime.session import (
     ContentBlock,
@@ -240,7 +244,9 @@ class ConversationRuntime:
     auto_compaction_threshold: int = field(default_factory=lambda: _resolve_compaction_threshold())
     usage_tracker: UsageTracker = field(default_factory=UsageTracker)
     on_event: Callable[[AssistantEvent], None] | None = None
-    on_text_delta: Callable[[str], None] | None = None  # Legacy callback
+    on_text_delta: Callable[[str], None] | None = None
+    on_tool_use: Callable[[str, str], None] | None = None  # (tool_name, tool_input)
+    on_tool_result: Callable[[str, str, bool], None] | None = None  # (tool_name, output, is_error)
 
     # -- Builder helpers -----------------------------------------------------
 
@@ -652,7 +658,7 @@ class ConversationRuntime:
                         )
 
             # ---- Phase 2: Permission check ----
-            permission_outcome = self._resolve_permission(
+            permission_outcome = await self._resolve_permission(
                 tool_name, effective_input, permission_override
             )
             if isinstance(permission_outcome, PermissionDeny):
@@ -671,6 +677,13 @@ class ConversationRuntime:
                 continue
 
             # ---- Phase 3: Execute tool ----
+            # Notify caller that tool is about to execute
+            if self.on_tool_use is not None:
+                try:
+                    self.on_tool_use(tool_name, effective_input)
+                except Exception:
+                    pass
+
             if self.tool_executor is None:
                 output = f"No tool executor configured for '{tool_name}'"
                 is_error = True
@@ -712,6 +725,13 @@ class ConversationRuntime:
                 elif post_result.messages:
                     output = self._merge_hook_feedback(output, post_result.messages)
 
+            # Notify caller of tool result
+            if self.on_tool_result is not None:
+                try:
+                    self.on_tool_result(tool_name, output, is_error)
+                except Exception:
+                    pass
+
             result_msg = self._make_tool_result(
                 tool_id, tool_name, output, is_error=is_error
             )
@@ -727,7 +747,7 @@ class ConversationRuntime:
 
     # -- Permission resolution -----------------------------------------------
 
-    def _resolve_permission(
+    async def _resolve_permission(
         self,
         tool_name: str,
         tool_input: str,
@@ -737,8 +757,9 @@ class ConversationRuntime:
 
         Priority:
           1. Hook override (allow/deny/ask)
-          2. Interactive prompter (if policy mode is PROMPT and prompter exists)
-          3. Policy-based authorization
+          2. Policy-based authorization
+          3. Interactive prompter (if policy returned __NEEDS_PROMPT__)
+          4. Cache and persist the decision
         """
         if hook_override is not None:
             if hook_override == PermissionOverride.ALLOW:
@@ -747,9 +768,32 @@ class ConversationRuntime:
                 return PermissionDeny(reason="Denied by hook permission override")
             # ASK falls through to normal policy + prompter flow
 
-        return self.permission_policy.authorize(
-            tool_name, tool_input, self.permission_prompter
-        )
+        outcome = self.permission_policy.authorize(tool_name, tool_input)
+
+        # Check if the policy needs interactive approval
+        if (
+            isinstance(outcome, PermissionDeny)
+            and outcome.reason.startswith("__NEEDS_PROMPT__")
+            and self.permission_prompter is not None
+        ):
+            request = PermissionRequest(
+                tool_name=tool_name,
+                input_json=tool_input,
+                current_mode=self.permission_policy.mode,
+                required_mode=TOOL_PERMISSION_REQUIREMENTS.get(
+                    tool_name, PermissionMode.WORKSPACE_WRITE
+                ),
+                reason=f"Tool '{tool_name}' requires approval",
+            )
+            decision = await self.permission_prompter.decide(request)
+            if decision == PermissionPromptDecision.ALLOW:
+                # Cache the decision so we don't ask again for this tool
+                result = PermissionAllow()
+                self.permission_policy.remember_decision(tool_name, result)
+                return result
+            return PermissionDeny(reason=f"User denied '{tool_name}'")
+
+        return outcome
 
     # -- Auto-compaction -----------------------------------------------------
 

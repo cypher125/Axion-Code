@@ -225,7 +225,14 @@ class PermissionPolicy:
                 reason=f"Tool '{tool_name}' requires {required.value}"
             )
 
-        # PROMPT mode — would need interactive approval
+        # PROMPT mode — needs interactive approval from the conversation runtime
+        if self.mode == PermissionMode.PROMPT:
+            # Return a special "needs prompt" deny that the runtime should intercept
+            return PermissionDeny(
+                reason=f"__NEEDS_PROMPT__:{tool_name}:{required.value}"
+            )
+
+        # Default: allow
         return PermissionAllow()
 
     @staticmethod
