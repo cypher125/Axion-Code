@@ -313,38 +313,89 @@ def _create_plugin_manager() -> PluginManager:
 
 
 def _export_transcript(session: Session, output_path: Path) -> None:
-    """Export a session transcript to a markdown file."""
+    """Export a session transcript to a clean, readable markdown file."""
     lines: list[str] = []
-    lines.append("# Axion Code Session Transcript")
+
+    # Header
+    created = datetime.fromtimestamp(session.created_at_ms / 1000)
+    lines.append("# Axion Code — Session Transcript")
     lines.append("")
-    lines.append(f"- Session ID: {session.session_id}")
-    lines.append(f"- Created: {datetime.fromtimestamp(session.created_at_ms / 1000).isoformat()}")
-    lines.append(f"- Messages: {session.message_count()}")
+    lines.append(f"> **Session**: `{session.session_id}`")
+    lines.append(f"> **Date**: {created.strftime('%Y-%m-%d %H:%M:%S')}")
+    lines.append(f"> **Messages**: {session.message_count()}")
+    if session.fork:
+        lines.append(f"> **Forked from**: `{session.fork.parent_session_id}`")
+    if session.compaction:
+        lines.append(f"> **Compactions**: {session.compaction.count}")
     lines.append("")
     lines.append("---")
     lines.append("")
 
+    turn_number = 0
     for msg in session.messages:
-        role_label = msg.role.value.upper()
-        lines.append(f"## {role_label}")
-        lines.append("")
+        role = msg.role.value
+
+        if role == "user":
+            turn_number += 1
+            lines.append(f"## Turn {turn_number}")
+            lines.append("")
+            lines.append("### You")
+            lines.append("")
+        elif role == "assistant":
+            lines.append("### Axion")
+            lines.append("")
+        elif role == "system":
+            lines.append("### System")
+            lines.append("")
+
         for block in msg.blocks:
             if isinstance(block, TextBlock):
                 lines.append(block.text)
+                lines.append("")
             elif isinstance(block, ToolUseBlock):
-                lines.append(f"**Tool Use: {block.name}**")
+                lines.append("<details>")
+                lines.append(f"<summary>🔧 <strong>{block.name}</strong></summary>")
+                lines.append("")
                 lines.append("```json")
-                lines.append(block.input)
+                # Pretty-print the input JSON
+                try:
+                    import json as _json
+                    parsed = _json.loads(block.input) if block.input else {}
+                    lines.append(_json.dumps(parsed, indent=2))
+                except Exception:
+                    lines.append(block.input)
                 lines.append("```")
+                lines.append("</details>")
+                lines.append("")
             elif isinstance(block, ToolResultBlock):
+                icon = "❌" if block.is_error else "✅"
                 status = "Error" if block.is_error else "Result"
-                lines.append(f"**Tool {status}: {block.tool_name}**")
+                lines.append("<details>")
+                lines.append(f"<summary>{icon} <strong>{block.tool_name}</strong> — {status}</summary>")
+                lines.append("")
                 lines.append("```")
-                lines.append(block.output[:2000])
-                if len(block.output) > 2000:
-                    lines.append("... (truncated)")
+                output = block.output
+                if len(output) > 3000:
+                    output = output[:3000] + "\n... (truncated)"
+                lines.append(output)
                 lines.append("```")
+                lines.append("</details>")
+                lines.append("")
+
+        if role == "assistant" and msg.usage:
+            cost = msg.usage.estimate_cost_usd()
+            lines.append(
+                f"*Tokens: {msg.usage.total_tokens():,} | "
+                f"Cost: ${cost.total_cost_usd():.4f}*"
+            )
+            lines.append("")
+
+        lines.append("---")
         lines.append("")
+
+    # Footer
+    lines.append(f"*Exported by Axion Code on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*")
+    lines.append("")
 
     output_path.write_text("\n".join(lines), encoding="utf-8")
 
@@ -878,7 +929,66 @@ def _handle_session_command(args: str, session: Session) -> str:
         session.save(path)
         return f"Session saved to: {path}"
 
-    return "Usage: /session [show|list|fork [name]|save]"
+    if action in ("switch", "sw"):
+        target = parts[1].strip() if len(parts) > 1 else ""
+        if not target:
+            return "Usage: /session switch <session_id|latest>"
+        path = _resolve_session(target)
+        if path is None:
+            return f"Session not found: {target}"
+        try:
+            loaded = Session.load(path)
+            # Replace current session state
+            session.session_id = loaded.session_id
+            session.messages = loaded.messages
+            session.created_at_ms = loaded.created_at_ms
+            session.updated_at_ms = loaded.updated_at_ms
+            session.compaction = loaded.compaction
+            session.fork = loaded.fork
+            # Update persistence path
+            session.with_persistence_path(_session_path_for_id(loaded.session_id))
+            return (
+                f"Switched to session {loaded.session_id}\n"
+                f"  Messages: {loaded.message_count()}\n"
+                f"  Created: {datetime.fromtimestamp(loaded.created_at_ms / 1000).strftime('%Y-%m-%d %H:%M')}"
+            )
+        except Exception as exc:
+            return f"Failed to switch session: {exc}"
+
+    if action in ("delete", "rm"):
+        target = parts[1].strip() if len(parts) > 1 else ""
+        if not target:
+            return "Usage: /session delete <session_id>"
+        if target == session.session_id:
+            return "Cannot delete the current active session."
+        path = _resolve_session(target)
+        if path is None:
+            return f"Session not found: {target}"
+        try:
+            path.unlink()
+            return f"Deleted session: {path.stem}"
+        except Exception as exc:
+            return f"Failed to delete session: {exc}"
+
+    if action == "new":
+        # Save current session first
+        try:
+            session.save()
+        except Exception:
+            pass
+        old_id = session.session_id
+        # Reset to a fresh session
+        import uuid
+        session.session_id = uuid.uuid4().hex[:16]
+        session.messages.clear()
+        session.compaction = None
+        session.fork = None
+        session.created_at_ms = int(time.time() * 1000)
+        session.updated_at_ms = session.created_at_ms
+        session.with_persistence_path(_session_path_for_id(session.session_id))
+        return f"New session {session.session_id} (previous: {old_id})"
+
+    return "Usage: /session [show|list|fork|save|switch|delete|new]"
 
 
 def _run_doctor_checks() -> str:
