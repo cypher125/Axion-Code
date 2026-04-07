@@ -57,12 +57,8 @@ from axion.runtime.compact import (
 from axion.runtime.config import ConfigLoader, RuntimeConfig
 from axion.runtime.conversation import ConversationRuntime, TurnSummary
 from axion.runtime.oauth import (
-    OAuthTokenSet,
     clear_oauth_credentials,
-    generate_pkce_pair,
-    generate_state,
     load_oauth_credentials,
-    save_oauth_credentials,
 )
 from axion.runtime.permissions import (
     PermissionMode,
@@ -1275,144 +1271,100 @@ async def run_repl(
 # ---------------------------------------------------------------------------
 
 async def _run_login(provider_name: str = "anthropic") -> int:
-    """Run the OAuth login flow."""
+    """Log in by entering an API key (saved permanently) or via OAuth."""
     console.print("[bold]Axion Code Login[/bold]\n")
 
-    # Check for existing credentials
-    existing = load_oauth_credentials(provider_name)
-    if existing and not existing.is_expired():
-        console.print("[green]Already logged in.[/green]")
-        console.print("[dim]Use 'axion logout' to clear credentials.[/dim]")
-        return 0
-
-    # Load OAuth config
-    config = _load_config()
-    oauth_config = config.feature_config.oauth
-
-    if oauth_config is None or not oauth_config.client_id:
-        # Fall back to API key check
-        api_key = os.environ.get("ANTHROPIC_API_KEY")
-        if api_key:
-            console.print("[green]ANTHROPIC_API_KEY is set. You can use the CLI directly.[/green]")
+    # Check for existing saved key
+    key_path = Path.home() / ".axion" / "credentials" / f"{provider_name}.key"
+    if key_path.exists():
+        saved_key = key_path.read_text(encoding="utf-8").strip()
+        if saved_key:
+            masked = saved_key[:8] + "..." + saved_key[-4:]
+            console.print(f"[green]Already logged in.[/green] Key: {masked}")
+            console.print("[dim]Use 'axion logout' to clear credentials.[/dim]")
             return 0
-        console.print("[yellow]No OAuth configuration found and ANTHROPIC_API_KEY is not set.[/yellow]")
-        console.print("Set ANTHROPIC_API_KEY in your environment or configure OAuth in .claude.json")
-        return 1
 
-    # Generate PKCE pair and state
-    pkce = generate_pkce_pair()
-    state = generate_state()
+    # Check env var
+    env_vars = {
+        "anthropic": "ANTHROPIC_API_KEY",
+        "openai": "OPENAI_API_KEY",
+        "xai": "XAI_API_KEY",
+    }
+    env_var = env_vars.get(provider_name, "ANTHROPIC_API_KEY")
+    existing_env = os.environ.get(env_var)
+    if existing_env:
+        console.print(f"[green]{env_var} is already set in your environment.[/green]")
+        console.print("[dim]Want to save it permanently? Enter 'save' below, or enter a different key.[/dim]\n")
 
-    # Build authorization URL
-    scopes_str = " ".join(oauth_config.scopes) if oauth_config.scopes else "read write"
-    callback_port = oauth_config.callback_port or DEFAULT_OAUTH_CALLBACK_PORT
-    redirect_uri = f"http://localhost:{callback_port}/callback"
+    # Prompt for API key
+    console.print(f"Provider: [bold]{provider_name}[/bold]")
+    console.print()
+    console.print("Enter your API key (or 'save' to save the current env key):")
+    console.print("  Get one at: [link]https://console.anthropic.com/settings/keys[/link]")
+    console.print()
 
-    auth_url = (
-        f"{oauth_config.authorize_url}"
-        f"?client_id={oauth_config.client_id}"
-        f"&response_type=code"
-        f"&redirect_uri={redirect_uri}"
-        f"&state={state}"
-        f"&code_challenge={pkce.code_challenge}"
-        f"&code_challenge_method=S256"
-        f"&scope={scopes_str}"
-    )
-
-    console.print("Open this URL in your browser:\n")
-    console.print(f"[link={auth_url}]{auth_url}[/link]\n")
-    console.print(f"Waiting for callback on port {callback_port}...")
-
-    # Start a simple HTTP server to receive the callback
     try:
-        import http.server
-        import urllib.parse
-
-        auth_code: str | None = None
-        received_state: str | None = None
-
-        class CallbackHandler(http.server.BaseHTTPRequestHandler):
-            def do_GET(self) -> None:
-                nonlocal auth_code, received_state
-                parsed = urllib.parse.urlparse(self.path)
-                params = urllib.parse.parse_qs(parsed.query)
-                auth_code = params.get("code", [None])[0]
-                received_state = params.get("state", [None])[0]
-
-                self.send_response(200)
-                self.send_header("Content-Type", "text/html")
-                self.end_headers()
-                self.wfile.write(
-                    b"<html><body><h1>Login successful!</h1>"
-                    b"<p>You can close this tab and return to the terminal.</p>"
-                    b"</body></html>"
-                )
-
-            def log_message(self, format: str, *args: Any) -> None:
-                pass  # Suppress HTTP logs
-
-        server = http.server.HTTPServer(("localhost", callback_port), CallbackHandler)
-        server.timeout = 120  # 2 minute timeout
-        server.handle_request()
-
-        if auth_code is None:
-            console.print("[red]No authorization code received.[/red]")
-            return 1
-
-        if received_state != state:
-            console.print("[red]State mismatch - possible CSRF attack.[/red]")
-            return 1
-
-        # Exchange code for token
-        import httpx
-
-        async with httpx.AsyncClient() as client:
-            token_response = await client.post(
-                oauth_config.token_url,
-                data={
-                    "grant_type": "authorization_code",
-                    "code": auth_code,
-                    "redirect_uri": redirect_uri,
-                    "client_id": oauth_config.client_id,
-                    "code_verifier": pkce.code_verifier,
-                },
-            )
-
-        if token_response.status_code != 200:
-            console.print(f"[red]Token exchange failed: {token_response.text}[/red]")
-            return 1
-
-        token_data = token_response.json()
-        expires_at = None
-        if "expires_in" in token_data:
-            expires_at = int(time.time()) + token_data["expires_in"]
-
-        token_set = OAuthTokenSet(
-            access_token=token_data["access_token"],
-            refresh_token=token_data.get("refresh_token"),
-            expires_at=expires_at,
-            scopes=token_data.get("scope", "").split(),
-        )
-
-        save_oauth_credentials(provider_name, token_set)
-        console.print("[green]Login successful! Credentials saved.[/green]")
-        return 0
-
-    except Exception as exc:
-        console.print(f"[red]Login failed: {exc}[/red]")
+        answer = console.input("[cyan]API key: [/cyan]").strip()
+    except (EOFError, KeyboardInterrupt):
+        console.print("\n[dim]Cancelled.[/dim]")
         return 1
+
+    if not answer:
+        console.print("[yellow]No key entered.[/yellow]")
+        return 1
+
+    # Handle 'save' — persist the env var key
+    if answer.lower() == "save" and existing_env:
+        answer = existing_env
+
+    # Save the key permanently
+    key_path.parent.mkdir(parents=True, exist_ok=True)
+    key_path.write_text(answer, encoding="utf-8")
+    try:
+        os.chmod(key_path, 0o600)
+    except OSError:
+        pass
+
+    # Also set it in the current process so it works immediately
+    os.environ[env_var] = answer
+
+    masked = answer[:8] + "..." + answer[-4:]
+    console.print(f"\n[green]Key saved![/green] ({masked})")
+    console.print(f"Stored at: [dim]{key_path}[/dim]")
+    console.print("\n[bold]You're ready to go![/bold] Run [cyan]axion[/cyan] to start.")
+    return 0
 
 
 def _run_logout(provider_name: str = "anthropic") -> int:
-    """Clear OAuth credentials."""
+    """Clear all stored credentials (API key + OAuth)."""
     console.print("[bold]Axion Code Logout[/bold]\n")
-    existing = load_oauth_credentials(provider_name)
-    if existing is None:
-        console.print("[dim]No stored credentials found.[/dim]")
-        return 0
+    cleared = False
 
-    clear_oauth_credentials(provider_name)
-    console.print("[green]Credentials cleared.[/green]")
+    # Clear saved API key
+    key_path = Path.home() / ".axion" / "credentials" / f"{provider_name}.key"
+    if key_path.exists():
+        key_path.unlink()
+        console.print(f"[green]Removed saved API key: {key_path}[/green]")
+        cleared = True
+
+    # Clear OAuth credentials
+    existing = load_oauth_credentials(provider_name)
+    if existing is not None:
+        clear_oauth_credentials(provider_name)
+        console.print("[green]Cleared OAuth credentials.[/green]")
+        cleared = True
+
+    # Clear env var for this process
+    env_vars = {"anthropic": "ANTHROPIC_API_KEY", "openai": "OPENAI_API_KEY", "xai": "XAI_API_KEY"}
+    env_var = env_vars.get(provider_name)
+    if env_var and env_var in os.environ:
+        del os.environ[env_var]
+        console.print(f"[green]Cleared {env_var} from current session.[/green]")
+        cleared = True
+
+    if not cleared:
+        console.print("[dim]No stored credentials found.[/dim]")
+
     return 0
 
 
@@ -1492,12 +1444,14 @@ def cli(
             console.print()
             console.print("[bold red]No API key configured.[/bold red]")
             console.print()
-            console.print("Set one of these to get started:")
-            console.print("  [cyan]export ANTHROPIC_API_KEY=sk-ant-...[/cyan]   (Claude)")
-            console.print("  [cyan]export OPENAI_API_KEY=sk-...[/cyan]          (GPT)")
-            console.print("  [cyan]export XAI_API_KEY=xai-...[/cyan]            (Grok)")
+            console.print("Quick setup:")
+            console.print("  [cyan]axion login[/cyan]                          (paste your API key, saved permanently)")
             console.print()
-            console.print("Or use a local model with Ollama (no API key needed):")
+            console.print("Or set an environment variable:")
+            console.print("  [cyan]$env:ANTHROPIC_API_KEY=\"sk-ant-...\"[/cyan]  (PowerShell)")
+            console.print("  [cyan]export ANTHROPIC_API_KEY=sk-ant-...[/cyan]   (Linux/Mac)")
+            console.print()
+            console.print("Or use a local model with Ollama (free, no key needed):")
             console.print("  [cyan]ollama pull llama3.1[/cyan]")
             console.print("  [cyan]axion -m llama3.1[/cyan]")
             console.print()

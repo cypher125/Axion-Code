@@ -66,9 +66,20 @@ class AuthCredentials:
 
     @classmethod
     def from_env(cls) -> AuthCredentials:
+        # 1. Check environment variable
         api_key = os.environ.get("ANTHROPIC_API_KEY")
         if api_key:
             return cls.from_api_key(api_key)
+
+        # 2. Check saved key file (from `axion login`)
+        from pathlib import Path
+        key_path = Path.home() / ".axion" / "credentials" / "anthropic.key"
+        if key_path.exists():
+            saved_key = key_path.read_text(encoding="utf-8").strip()
+            if saved_key:
+                os.environ["ANTHROPIC_API_KEY"] = saved_key  # Set for this process
+                return cls.from_api_key(saved_key)
+
         raise MissingCredentialsError("Anthropic", ["ANTHROPIC_API_KEY"])
 
 
