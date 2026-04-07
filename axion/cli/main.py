@@ -1175,6 +1175,21 @@ async def run_repl(
             if not user_input:
                 continue
 
+            # Catch common mistake: typing a command without the /
+            _command_words = {
+                "help", "quit", "exit", "clear", "cost", "status", "model",
+                "compact", "config", "diff", "export", "doctor", "version",
+                "resume", "login", "logout", "session", "plugins", "skills",
+                "agents", "mcp", "memory", "models", "permissions", "sandbox",
+            }
+            first_word = user_input.split()[0].lower()
+            if first_word in _command_words:
+                console.print(
+                    f"[yellow]Did you mean [bold]/{user_input}[/bold]? "
+                    f"Commands start with /[/yellow]"
+                )
+                continue
+
             # Handle slash commands
             if user_input.startswith("/"):
                 response = await _handle_slash_command(
