@@ -87,6 +87,18 @@ SLASH_COMMAND_SPECS: list[SlashCommandSpec] = [
     SlashCommandSpec(name="review", summary="AI code review of recent changes", argument_hint="[file|HEAD~N]", category="workflow"),
     SlashCommandSpec(name="test", summary="Generate tests for a file", argument_hint="<file> [pytest|jest]", category="workflow"),
     SlashCommandSpec(name="init-project", aliases=["scaffold"], summary="Scaffold project from template", argument_hint="[react|django|fastapi|express|cli]", category="workflow"),
+    SlashCommandSpec(name="security-review", summary="AI security audit of code", argument_hint="[file]", category="workflow"),
+
+    # -- Utility --
+    SlashCommandSpec(name="context", summary="Show context window usage (tokens/capacity)", category="utility"),
+    SlashCommandSpec(name="branch", summary="Show or switch git branch", argument_hint="[branch_name]", category="utility"),
+    SlashCommandSpec(name="hooks", summary="Show configured hooks", category="utility"),
+    SlashCommandSpec(name="copy", summary="Copy last response to clipboard", category="utility"),
+    SlashCommandSpec(name="rename", summary="Rename current session", argument_hint="<new_name>", category="utility"),
+    SlashCommandSpec(name="files", summary="List files referenced in this session", category="utility"),
+    SlashCommandSpec(name="summary", summary="AI summarizes the conversation so far", category="utility"),
+    SlashCommandSpec(name="stats", summary="Show detailed usage statistics", category="utility"),
+    SlashCommandSpec(name="upgrade", summary="Show upgrade path (Free → Pro → Team)", category="utility"),
 ]
 
 

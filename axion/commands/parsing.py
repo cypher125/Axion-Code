@@ -245,7 +245,7 @@ _CATEGORY_LABELS: dict[str, str] = {
 
 _CATEGORY_ORDER = [
     "core", "model", "session", "config", "tools",
-    "info", "auth", "workflow", "advanced",
+    "info", "auth", "workflow", "utility",
 ]
 
 

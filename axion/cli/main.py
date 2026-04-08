@@ -792,6 +792,167 @@ async def _handle_slash_command(
     if cmd == "plan":
         return _handle_plan_command(args, runtime, session)
 
+    # --- Context (token usage) ---
+    if cmd == "context":
+        tokens = estimate_session_tokens(session)
+        model_window = 200_000  # Default
+        pct = (tokens / model_window * 100) if model_window > 0 else 0
+        bar_len = int(pct / 2)  # 50 chars max
+        bar = "█" * bar_len + "░" * (50 - bar_len)
+        return (
+            f"Context window usage:\n"
+            f"  Model: {runtime.model}\n"
+            f"  Estimated tokens: {tokens:,} / {model_window:,}\n"
+            f"  [{bar}] {pct:.1f}%\n"
+            f"  Messages: {session.message_count()}"
+        )
+
+    # --- Branch ---
+    if cmd == "branch":
+        if args.strip():
+            from axion.runtime.git import git_create_branch
+            try:
+                git_create_branch(Path.cwd(), args.strip())
+                return f"Switched to branch: {args.strip()}"
+            except Exception as exc:
+                return f"Branch failed: {exc}"
+        branch = _git_branch() or "unknown"
+        return f"Current branch: {branch}"
+
+    # --- Hooks ---
+    if cmd == "hooks":
+        cfg = config or _load_config()
+        hooks = cfg.feature_config.hooks
+        lines_out = ["Configured hooks:"]
+        pre = hooks.pre_tool_use
+        post = hooks.post_tool_use
+        fail = hooks.post_tool_use_failure
+        if not pre and not post and not fail:
+            return "No hooks configured."
+        if pre:
+            lines_out.append(f"  Pre-tool-use ({len(pre)}):")
+            for h in pre:
+                lines_out.append(f"    {h.command}")
+        if post:
+            lines_out.append(f"  Post-tool-use ({len(post)}):")
+            for h in post:
+                lines_out.append(f"    {h.command}")
+        if fail:
+            lines_out.append(f"  Post-failure ({len(fail)}):")
+            for h in fail:
+                lines_out.append(f"    {h.command}")
+        return "\n".join(lines_out)
+
+    # --- Copy ---
+    if cmd == "copy":
+        # Copy last assistant response to clipboard
+        last_text = ""
+        for msg in reversed(session.messages):
+            if msg.role.value == "assistant":
+                for block in msg.blocks:
+                    if hasattr(block, "text"):
+                        last_text = block.text
+                        break
+                if last_text:
+                    break
+        if not last_text:
+            return "No assistant response to copy."
+        try:
+            import subprocess as _sp
+            process = _sp.Popen(["clip"], stdin=_sp.PIPE)
+            process.communicate(last_text.encode("utf-8"))
+            return f"Copied {len(last_text)} chars to clipboard."
+        except Exception:
+            return f"Clipboard not available. Last response ({len(last_text)} chars):\n{last_text[:200]}..."
+
+    # --- Rename ---
+    if cmd == "rename":
+        new_name = args.strip()
+        if not new_name:
+            return "Usage: /rename <new_session_name>"
+        old_id = session.session_id
+        session.session_id = new_name
+        session.with_persistence_path(_session_path_for_id(new_name))
+        return f"Session renamed: {old_id} → {new_name}"
+
+    # --- Files ---
+    if cmd == "files":
+        # List files that were read/written in this session
+        files_seen: set[str] = set()
+        for msg in session.messages:
+            for block in msg.blocks:
+                if hasattr(block, "name") and hasattr(block, "input"):
+                    try:
+                        import json as _j
+                        params = _j.loads(block.input) if block.input else {}
+                        fp = params.get("file_path") or params.get("path") or params.get("pattern")
+                        if fp:
+                            files_seen.add(str(fp))
+                    except Exception:
+                        pass
+        if not files_seen:
+            return "No files referenced in this session."
+        lines_out = [f"Files referenced ({len(files_seen)}):"]
+        for f in sorted(files_seen):
+            lines_out.append(f"  {f}")
+        return "\n".join(lines_out)
+
+    # --- Summary ---
+    if cmd == "summary":
+        # Ask the AI to summarize the conversation
+        session.push_user_text(
+            "Summarize this entire conversation so far in a brief paragraph. "
+            "What topics were discussed, what was accomplished, and what's the current state?"
+        )
+        return ""  # Will be processed as a turn
+
+    # --- Stats ---
+    if cmd == "stats":
+        total = runtime.usage_tracker.total
+        from axion.runtime.usage import pricing_for_model
+        mp = pricing_for_model(runtime.model)
+        cost = total.estimate_cost_usd_with_pricing(mp) if mp else total.estimate_cost_usd()
+        return (
+            f"Session statistics:\n"
+            f"  Model: {runtime.model}\n"
+            f"  Turns: {runtime.usage_tracker.turn_count}\n"
+            f"  Messages: {session.message_count()}\n"
+            f"  Input tokens: {total.input_tokens:,}\n"
+            f"  Output tokens: {total.output_tokens:,}\n"
+            f"  Cache write: {total.cache_creation_input_tokens:,}\n"
+            f"  Cache read: {total.cache_read_input_tokens:,}\n"
+            f"  Total tokens: {total.total_tokens():,}\n"
+            f"  Total cost: ${cost.total_cost_usd():.4f}\n"
+            f"  Session ID: {session.session_id}"
+        )
+
+    # --- Security review ---
+    if cmd == "security-review":
+        file_target = args.strip() or ""
+        session.push_user_text(
+            f"SECURITY_REVIEW_MODE: Perform a security audit of {'the file ' + file_target if file_target else 'the recent changes'}.\n\n"
+            "Check for:\n"
+            "1. SQL injection vulnerabilities\n"
+            "2. XSS (cross-site scripting)\n"
+            "3. Authentication/authorization flaws\n"
+            "4. Sensitive data exposure (API keys, passwords in code)\n"
+            "5. Input validation issues\n"
+            "6. Insecure dependencies\n"
+            "7. CSRF vulnerabilities\n"
+            "8. Path traversal\n\n"
+            "Rate each finding as CRITICAL, HIGH, MEDIUM, or LOW."
+        )
+        return ""
+
+    # --- Upgrade (tier upgrade) ---
+    if cmd == "upgrade":
+        from axion.runtime.license import get_upgrade_message, load_license
+        info = load_license()
+        msg = get_upgrade_message(info.tier)
+        if not msg:
+            return "You're on the highest tier. No upgrade available."
+        return f"Current plan: {info.tier}\n\n{msg}"
+
     return f"Command /{cmd} recognized but has no handler yet."
 
 
