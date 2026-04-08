@@ -68,6 +68,20 @@ TIERS = {
             "priority_support",
         ],
     },
+    "enterprise": {
+        "name": "Enterprise",
+        "price": "Custom",
+        "max_turns_per_session": 999999,
+        "max_sessions_per_day": 999999,
+        "tools": "all",
+        "features": [
+            "plan_mode", "memory", "plugins", "skills",
+            "web_search", "web_fetch", "agent", "tool_search",
+            "notebook_edit", "session_export", "cost_budget",
+            "shared_sessions", "team_tasks", "cron_scheduler",
+            "priority_support", "custom_models", "api_access",
+        ],
+    },
 }
 
 FREE_TIER_TURNS = TIERS["free"]["max_turns_per_session"]
