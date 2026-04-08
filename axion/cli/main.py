@@ -473,18 +473,20 @@ def _build_runtime(
     """Build a ConversationRuntime with all components wired up."""
     cfg = config or _load_config()
 
-    # Resolve model: CLI flag -> config -> env -> auto-detect from saved keys
+    # Resolve model: explicit flag > auto-detect from saved keys > config
+    # Auto-detect takes priority over config because config might reference
+    # a provider without a saved key (e.g. Claude settings with no Anthropic key)
     if model:
         effective_model = resolve_model_alias(model)
     else:
-        effective_model = resolve_model_alias(DEFAULT_MODEL)
-
-    if effective_model == resolve_model_alias(DEFAULT_MODEL):
-        # User didn't specify a model — check config, then auto-detect
-        if cfg.feature_config.model:
+        detected = _auto_detect_model()
+        if detected != DEFAULT_MODEL:
+            # Auto-detect found a saved key — use that provider
+            effective_model = resolve_model_alias(detected)
+        elif cfg.feature_config.model:
             effective_model = resolve_model_alias(cfg.feature_config.model)
         else:
-            effective_model = resolve_model_alias(_auto_detect_model())
+            effective_model = resolve_model_alias(DEFAULT_MODEL)
 
     # Build provider
     provider = ProviderClient.from_model(effective_model)
