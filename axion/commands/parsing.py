@@ -251,21 +251,14 @@ _CATEGORY_ORDER = [
 
 def render_help(
     registry: CommandRegistry | None = None,
-    include_interactive_only: bool = True,
-    detailed: bool = False,
 ) -> str:
     """Render categorized help text for all available slash commands."""
     reg = registry or get_command_registry()
     lines: list[str] = ["Available commands:", ""]
 
-    # Group by category in order
     rendered_categories: set[str] = set()
     for cat in _CATEGORY_ORDER:
         specs = reg.by_category(cat)
-        if not specs:
-            continue
-        if False:  # all commands are real now
-            pass
         if not specs:
             continue
 
@@ -278,8 +271,7 @@ def render_help(
             aliases = ""
             if spec.aliases:
                 aliases = f" (aliases: {', '.join('/' + a for a in spec.aliases)})"
-            interactive = ""
-            lines.append(f"    /{spec.name}{hint} — {spec.summary}{aliases}{interactive}")
+            lines.append(f"    /{spec.name}{hint} — {spec.summary}{aliases}")
 
         lines.append("")
 
@@ -320,8 +312,6 @@ def render_help_detail(
         lines.append(f"  Aliases: {', '.join('/' + a for a in spec.aliases)}")
     if spec.resume_supported:
         lines.append("  Supports --resume mode")
-    if False:
-        lines.append("  Interactive REPL only")
     lines.append(f"  Category: {spec.category}")
 
     return "\n".join(lines)

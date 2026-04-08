@@ -1757,7 +1757,7 @@ def _run_logout(provider_name: str = "anthropic") -> int:
 # ---------------------------------------------------------------------------
 
 @click.group(invoke_without_command=True)
-@click.option("--model", "-m", default=DEFAULT_MODEL, help="Model to use")
+@click.option("--model", "-m", default=None, help="Model to use (auto-detects from saved keys)")
 @click.option(
     "--permission-mode",
     type=click.Choice(["allow", "read-only", "workspace-write", "danger-full-access", "prompt"]),
@@ -1781,7 +1781,7 @@ def _run_logout(provider_name: str = "anthropic") -> int:
 @click.pass_context
 def cli(
     ctx: click.Context,
-    model: str,
+    model: str | None,
     permission_mode: str,
     prompt: str | None,
     version: bool,
@@ -1791,9 +1791,9 @@ def cli(
     system_prompt_file: str | None,
     budget: float | None,
 ) -> None:
-    """Axion Code - Python CLI agent harness.
+    """Axion Code - AI coding assistant for your terminal.
 
-    Interactive AI coding assistant powered by Claude.
+    Supports Claude, GPT, Grok, and local models via Ollama.
 
     Run without arguments for interactive REPL mode, or pass --prompt/-p for
     one-shot execution. Use subcommands for specific operations.
@@ -1817,11 +1817,14 @@ def cli(
     if ctx.invoked_subcommand is not None:
         return
 
+    # Auto-detect model if not specified
+    effective_model = model or _auto_detect_model()
+
     try:
         if prompt:
-            exit_code = asyncio.run(run_one_shot(prompt, model, permission_mode, output_format))
+            exit_code = asyncio.run(run_one_shot(prompt, effective_model, permission_mode, output_format))
         else:
-            exit_code = asyncio.run(run_repl(model, permission_mode, resume, output_format, budget))
+            exit_code = asyncio.run(run_repl(effective_model, permission_mode, resume, output_format, budget))
     except Exception as exc:
         error_msg = str(exc)
         if "credentials" in error_msg.lower() or "api key" in error_msg.lower():
@@ -2034,7 +2037,7 @@ def version_cmd() -> None:
 
 @cli.command()
 @click.argument("session_id", default="latest")
-@click.option("--model", "-m", default=DEFAULT_MODEL, help="Model to use")
+@click.option("--model", "-m", default=None, help="Model to use (auto-detects from saved keys)")
 @click.option(
     "--permission-mode",
     type=click.Choice(["allow", "read-only", "workspace-write", "danger-full-access", "prompt"]),
@@ -2159,7 +2162,7 @@ def session_cmd(action: str, args: tuple[str, ...]) -> None:
 
 @cli.command(name="prompt")
 @click.argument("prompt_text")
-@click.option("--model", "-m", default=DEFAULT_MODEL)
+@click.option("--model", "-m", default=None)
 @click.option(
     "--output-format",
     type=click.Choice(["text", "json"]),
