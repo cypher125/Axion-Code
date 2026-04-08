@@ -48,7 +48,7 @@ def render_header(
     # Center: model
     model_display = f"[bold white]{model}[/bold white]"
     if plan_mode:
-        model_display += " [bold yellow]⚡PLAN[/bold yellow]"
+        model_display += " [bold #00d4aa]⚡PLAN[/bold #00d4aa]"
 
     # Right: session + branch
     right_parts = [f"[dim]{session_id[:8]}[/dim]"]
@@ -63,7 +63,7 @@ def render_header(
     header.add_column(ratio=1, justify="right")
     header.add_row(left, model_display, right)
 
-    console.print(Panel(header, style="dim", border_style="cyan", padding=(0, 1)))
+    console.print(Panel(header, style="dim", border_style="#00d4aa", padding=(0, 1)))
 
 
 # ---------------------------------------------------------------------------
@@ -91,7 +91,7 @@ def render_status_bar(
     parts.append(f"[dim]{permission_mode}[/dim]")
 
     if plan_mode:
-        parts.append("[bold yellow]PLAN MODE[/bold yellow]")
+        parts.append("[bold #00d4aa]PLAN MODE[/bold #00d4aa]")
 
     bar_text = " │ ".join(parts) if parts else "[dim]Ready[/dim]"
     console.print(f"[dim]{'─' * 60}[/dim]")
@@ -139,7 +139,7 @@ def render_welcome_screen(
 
     # Right column: tips + recent activity
     right_lines = [
-        "[bold yellow]Quick start[/bold yellow]",
+        "[bold #00d4aa]Quick start[/bold #00d4aa]",
     ]
 
     tips = [
@@ -155,7 +155,7 @@ def render_welcome_screen(
         right_lines.append(f"  [dim]Try:[/dim] {tip}")
 
     right_lines.append("")
-    right_lines.append("[bold yellow]Commands[/bold yellow]")
+    right_lines.append("[bold #00d4aa]Commands[/bold #00d4aa]")
     right_lines.append("  [bold]/plan[/bold] [dim]Design before coding[/dim]")
     right_lines.append("  [bold]/model[/bold] [dim]Switch AI model[/dim]")
     right_lines.append("  [bold]/cost[/bold] [dim]See token usage[/dim]")
@@ -164,7 +164,7 @@ def render_welcome_screen(
 
     if resumed:
         right_lines.append("")
-        right_lines.append("[bold yellow]Session[/bold yellow]")
+        right_lines.append("[bold #00d4aa]Session[/bold #00d4aa]")
         right_lines.append(f"  [dim]Resumed {message_count} messages[/dim]")
         right_lines.append(f"  [dim]ID: {session_id[:12]}[/dim]")
 
@@ -180,7 +180,7 @@ def render_welcome_screen(
 
     console.print(Panel(
         layout,
-        border_style="dim",
+        border_style="#0a192f",
         padding=(1, 2),
     ))
     console.print()
@@ -298,9 +298,9 @@ def render_tool_panel(
     content = "\n".join(lines) if lines else "[dim]No parameters[/dim]"
     console.print(Panel(
         content,
-        title=f"[bold yellow]{title}[/bold yellow]",
+        title=f"[bold #00d4aa]{title}[/bold #00d4aa]",
         title_align="left",
-        border_style="yellow",
+        border_style="#00d4aa",
         padding=(0, 1),
     ))
 
@@ -433,8 +433,8 @@ def render_permission_panel(
 
     console.print(Panel(
         "\n".join(lines),
-        title="[bold yellow]⚠ Permission Required[/bold yellow]",
+        title="[bold #00d4aa]⚠ Permission Required[/bold #00d4aa]",
         title_align="left",
-        border_style="yellow",
+        border_style="#00d4aa",
         padding=(0, 1),
     ))

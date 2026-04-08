@@ -39,24 +39,27 @@ class ColorTheme(enum.Enum):
     LIGHT = "light"
 
 
+# Navy/Cyan theme inspired by modern terminal UIs
 CLAW_THEME = Theme({
-    "axion.prompt": "bold cyan",
-    "axion.assistant": "white",
-    "axion.tool_name": "bold cyan",
-    "axion.tool_border": "dim",
-    "axion.tool_input": "dim",
-    "axion.tool_output": "green",
-    "axion.tool_success": "bold green",
-    "axion.tool_error": "bold red",
-    "axion.error": "bold red",
-    "axion.warning": "yellow",
-    "axion.info": "dim",
-    "axion.cost": "dim cyan",
-    "axion.status": "dim",
-    "axion.heading": "bold cyan",
-    "axion.code": "green",
-    "axion.link": "blue underline",
-    "axion.thinking": "dim italic",
+    "axion.prompt": "#00d4aa bold",       # Bright teal/cyan for prompt
+    "axion.assistant": "#e0e0e0",          # Light gray for response text
+    "axion.tool_name": "#00d4aa bold",     # Teal for tool names
+    "axion.tool_border": "#0a192f",        # Dark navy for borders
+    "axion.tool_input": "#8892b0",         # Muted blue-gray for inputs
+    "axion.tool_output": "#64ffda",        # Mint green for outputs
+    "axion.tool_success": "#64ffda bold",  # Bright mint for success
+    "axion.tool_error": "#ff6b6b bold",    # Coral red for errors
+    "axion.error": "#ff6b6b bold",         # Coral red
+    "axion.warning": "#ffd93d",            # Warm yellow
+    "axion.info": "#8892b0",              # Muted blue-gray
+    "axion.cost": "#00d4aa dim",           # Dim teal for cost
+    "axion.status": "#8892b0",             # Muted blue-gray
+    "axion.heading": "#ccd6f6 bold",       # Light blue-white for headings
+    "axion.code": "#64ffda",              # Mint green for code
+    "axion.link": "#00d4aa underline",     # Teal links
+    "axion.thinking": "#8892b0 italic",    # Muted italic for thinking
+    "axion.success_text": "#64ffda",       # Mint green
+    "axion.dim": "#8892b0",               # Muted blue-gray for dim text
 })
 
 

@@ -472,6 +472,31 @@ Axion supports the [Model Context Protocol](https://modelcontextprotocol.io/) fo
 
 Supports 6 transport types: stdio, SSE, HTTP, WebSocket, SDK, and managed proxy.
 
+## Terminal Theme
+
+Axion looks best with a dark navy terminal. For the optimal look:
+
+**Windows Terminal** — Add to your settings.json profiles:
+```json
+{
+    "colorScheme": "One Half Dark",
+    "background": "#0a192f",
+    "font": { "face": "Cascadia Code", "size": 13 }
+}
+```
+
+**VS Code Terminal** — Add to settings.json:
+```json
+{
+    "terminal.integrated.fontFamily": "Cascadia Code",
+    "workbench.colorCustomizations": {
+        "terminal.background": "#0a192f"
+    }
+}
+```
+
+Axion uses a **cyan/teal accent** (#00d4aa) with **mint green** (#64ffda) for success and **coral red** (#ff6b6b) for errors.
+
 ## Memory System
 
 Axion has a persistent memory system that stores context across conversations:

@@ -95,10 +95,12 @@ def create_key_bindings() -> KeyBindings:
 # Style
 # ---------------------------------------------------------------------------
 
+# Navy/Cyan terminal theme
 INPUT_STYLE = Style.from_dict({
-    "prompt": "bold cyan",
-    "bottom-toolbar": "bg:#1a1a2e fg:#888888",
-    "bottom-toolbar.text": "bg:#1a1a2e fg:#888888",
+    "prompt": "#00d4aa bold",                          # Teal prompt
+    "bottom-toolbar": "bg:#0a192f fg:#8892b0",         # Navy bg, muted text
+    "bottom-toolbar.text": "bg:#0a192f fg:#8892b0",
+    "placeholder": "#4a5568",                           # Dark gray placeholder
 })
 
 
