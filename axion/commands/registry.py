@@ -1,6 +1,6 @@
-"""Slash command registry and specifications.
+"""Slash command registry — ONLY commands that actually have handlers.
 
-Maps to: rust/crates/commands/src/lib.rs (SlashCommandSpec, 165+ command specs)
+No fake commands. If it shows in /help, it works.
 """
 
 from __future__ import annotations
@@ -20,13 +20,10 @@ class SlashCommandSpec:
     resume_supported: bool = False
     source: str = "builtin"
     category: str = "general"
-    interactive_only: bool = False
 
 
 class CommandSource(enum.Enum):
     BUILTIN = "builtin"
-    INTERNAL_ONLY = "internal_only"
-    FEATURE_GATED = "feature_gated"
     PLUGIN = "plugin"
     SKILL = "skill"
 
@@ -38,301 +35,58 @@ class CommandManifestEntry:
 
 
 # ---------------------------------------------------------------------------
-# All slash command specs (matching Rust SLASH_COMMAND_SPECS)
+# ONLY commands that have working handlers
 # ---------------------------------------------------------------------------
 
 SLASH_COMMAND_SPECS: list[SlashCommandSpec] = [
-    # -- Core commands --
-    SlashCommandSpec(
-        name="help", summary="Show available commands",
-        argument_hint="[command]", category="core",
-    ),
-    SlashCommandSpec(
-        name="quit", aliases=["exit", "q"],
-        summary="Exit the REPL", category="core",
-    ),
-    SlashCommandSpec(
-        name="clear", summary="Clear conversation history",
-        argument_hint="[--confirm]", resume_supported=True, category="core",
-    ),
-    SlashCommandSpec(
-        name="compact", summary="Compact session history to reduce token usage",
-        resume_supported=True, category="core",
-    ),
-    SlashCommandSpec(
-        name="cost", summary="Show token usage and estimated costs",
-        resume_supported=True, category="core",
-    ),
-    SlashCommandSpec(
-        name="status", summary="Show session status and environment info",
-        resume_supported=True, category="core",
-    ),
+    # -- Core --
+    SlashCommandSpec(name="help", summary="Show available commands", argument_hint="[command]", category="core"),
+    SlashCommandSpec(name="quit", aliases=["exit", "q"], summary="Exit the REPL", category="core"),
+    SlashCommandSpec(name="clear", summary="Clear conversation history", category="core"),
+    SlashCommandSpec(name="compact", summary="Compact session history to reduce tokens", category="core"),
+    SlashCommandSpec(name="cost", summary="Show token usage and costs", category="core"),
+    SlashCommandSpec(name="status", summary="Show session status", category="core"),
 
-    # -- Model & permissions --
-    SlashCommandSpec(
-        name="model", summary="Show or change the active model",
-        argument_hint="[model_name]", category="model",
-    ),
-    SlashCommandSpec(
-        name="models", summary="List available Ollama models",
-        resume_supported=True, category="model",
-    ),
-    SlashCommandSpec(
-        name="permissions", summary="Show or change permission mode",
-        argument_hint="[read-only|workspace-write|danger-full-access]",
-        category="model",
-    ),
+    # -- Model --
+    SlashCommandSpec(name="model", summary="Show or switch AI model", argument_hint="[opus|sonnet|haiku|gpt-4o|grok-2|llama3.1]", category="model"),
+    SlashCommandSpec(name="models", summary="List available Ollama models", category="model"),
+    SlashCommandSpec(name="permissions", summary="Show or change permission mode", argument_hint="[allow|prompt|read-only]", category="model"),
 
-    # -- Session management --
-    SlashCommandSpec(
-        name="resume", summary="Resume a previous session",
-        argument_hint="[session_id|latest]", resume_supported=True,
-        category="session",
-    ),
-    SlashCommandSpec(
-        name="session", summary="Session operations",
-        argument_hint="[list|show|fork|switch|delete]", category="session",
-    ),
-    SlashCommandSpec(
-        name="export", summary="Export conversation transcript",
-        argument_hint="[path]", resume_supported=True, category="session",
-    ),
+    # -- Session --
+    SlashCommandSpec(name="session", summary="Manage sessions (list/switch/new/fork/delete)", argument_hint="[list|switch|new|fork|delete]", category="session"),
+    SlashCommandSpec(name="resume", summary="Resume a previous session", argument_hint="[session_id|latest]", category="session"),
+    SlashCommandSpec(name="export", summary="Export transcript to markdown", argument_hint="[filename]", category="session"),
+    SlashCommandSpec(name="share", summary="Share session with teammates", argument_hint="[file|import <path>]", category="session"),
 
-    # -- Configuration --
-    SlashCommandSpec(
-        name="config", summary="Show configuration",
-        argument_hint="[section]", resume_supported=True, category="config",
-    ),
-    SlashCommandSpec(
-        name="sandbox", summary="Show sandbox status and configuration",
-        resume_supported=True, category="config",
-    ),
-    SlashCommandSpec(
-        name="init", summary="Initialize project with CLAUDE.md",
-        resume_supported=True, category="config",
-    ),
+    # -- Config & Setup --
+    SlashCommandSpec(name="config", summary="Show loaded configuration", category="config"),
+    SlashCommandSpec(name="init", summary="Create AXION.md for your project", category="config"),
+    SlashCommandSpec(name="sandbox", summary="Show sandbox status", category="config"),
+    SlashCommandSpec(name="license", summary="Show license status and upgrade path", category="config"),
 
-    # -- Tool management --
-    SlashCommandSpec(
-        name="mcp", summary="Manage MCP servers",
-        argument_hint="[list|show <server>|help]",
-        resume_supported=True, category="tools",
-    ),
-    SlashCommandSpec(
-        name="plugins", summary="Manage plugins",
-        argument_hint="[list|install|enable|disable|uninstall]",
-        category="tools",
-    ),
-    SlashCommandSpec(
-        name="agents", summary="List available agents",
-        argument_hint="[list]", resume_supported=True, category="tools",
-    ),
-    SlashCommandSpec(
-        name="skills", summary="List or invoke skills",
-        argument_hint="[list|<skill_name>]", resume_supported=True,
-        category="tools",
-    ),
+    # -- Tools & Plugins --
+    SlashCommandSpec(name="mcp", summary="Manage MCP servers", argument_hint="[list|show|help]", category="tools"),
+    SlashCommandSpec(name="plugins", summary="Manage plugins", argument_hint="[list|install|enable|disable]", category="tools"),
+    SlashCommandSpec(name="agents", summary="List available agents", category="tools"),
+    SlashCommandSpec(name="skills", summary="List available skills", category="tools"),
 
-    # -- Info & diagnostics --
-    SlashCommandSpec(
-        name="version", summary="Show version information",
-        resume_supported=True, category="info",
-    ),
-    SlashCommandSpec(
-        name="doctor", summary="Run diagnostic health checks",
-        resume_supported=True, category="info",
-    ),
-    SlashCommandSpec(
-        name="memory", summary="Show project memory files",
-        resume_supported=True, category="info",
-    ),
-    SlashCommandSpec(
-        name="diff", summary="Show git diff of current changes",
-        resume_supported=True, category="info",
-    ),
+    # -- Info --
+    SlashCommandSpec(name="version", summary="Show version", category="info"),
+    SlashCommandSpec(name="doctor", summary="Run health checks", category="info"),
+    SlashCommandSpec(name="memory", summary="Show project memory", category="info"),
+    SlashCommandSpec(name="diff", summary="Show git changes with syntax highlighting", category="info"),
 
     # -- Auth --
-    SlashCommandSpec(
-        name="login", summary="Authenticate with OAuth",
-        category="auth", interactive_only=True,
-    ),
-    SlashCommandSpec(
-        name="logout", summary="Clear stored credentials",
-        category="auth", interactive_only=True,
-    ),
+    SlashCommandSpec(name="login", summary="Save API key (axion login --provider openai)", category="auth"),
+    SlashCommandSpec(name="logout", summary="Remove saved credentials", category="auth"),
 
-    # -- Advanced / Interactive-only --
-    SlashCommandSpec(
-        name="vim", summary="Toggle vim mode",
-        category="advanced", interactive_only=True,
-    ),
-    SlashCommandSpec(
-        name="fast", summary="Toggle fast output mode",
-        category="advanced", interactive_only=True,
-    ),
-    SlashCommandSpec(
-        name="theme", summary="Change color theme",
-        argument_hint="[dark|light|default]",
-        category="advanced", interactive_only=True,
-    ),
-    SlashCommandSpec(
-        name="voice", summary="Toggle voice input mode",
-        category="advanced", interactive_only=True,
-    ),
-    SlashCommandSpec(
-        name="branch", summary="Show or switch git branch",
-        argument_hint="[branch_name]", category="advanced",
-    ),
-    SlashCommandSpec(
-        name="rewind", summary="Rewind conversation to a previous point",
-        argument_hint="[steps]", category="advanced", interactive_only=True,
-    ),
-    SlashCommandSpec(
-        name="hooks", summary="Show configured hooks",
-        category="advanced",
-    ),
-    SlashCommandSpec(
-        name="context", summary="Show current context window usage",
-        category="advanced",
-    ),
-    SlashCommandSpec(
-        name="output-style", aliases=["brief", "verbose"],
-        summary="Change output verbosity",
-        argument_hint="[brief|verbose|default]", category="advanced",
-    ),
-    SlashCommandSpec(
-        name="effort", summary="Set reasoning effort level",
-        argument_hint="[low|medium|high]", category="advanced",
-    ),
-
-    # -- Task & workflow --
-    SlashCommandSpec(
-        name="plan", summary="Enter plan mode for implementation design",
-        category="workflow", interactive_only=True,
-    ),
-    SlashCommandSpec(
-        name="review", summary="Review code changes",
-        category="workflow", interactive_only=True,
-    ),
-    SlashCommandSpec(
-        name="tasks", summary="Show or manage task list",
-        argument_hint="[list|add|complete]", category="workflow",
-    ),
-    SlashCommandSpec(
-        name="commit", summary="Auto-commit with AI-generated message",
-        argument_hint="[message]", category="workflow",
-    ),
-    SlashCommandSpec(
-        name="undo", summary="Revert last AI change (git reset)",
-        argument_hint="[hard|file.py]", category="workflow",
-    ),
-    SlashCommandSpec(
-        name="test", summary="Generate tests for a file",
-        argument_hint="<file_or_dir> [pytest|jest]", category="workflow",
-    ),
-    SlashCommandSpec(
-        name="init-project", aliases=["scaffold"],
-        summary="Create a new project from template",
-        argument_hint="[react|django|fastapi|express|cli]", category="workflow",
-    ),
-    SlashCommandSpec(
-        name="share", summary="Share session with teammates",
-        argument_hint="[file|json|import <path>]", category="session",
-    ),
-    SlashCommandSpec(
-        name="bughunter", summary="Search for bugs in scope",
-        argument_hint="[scope]", category="workflow", interactive_only=True,
-    ),
-
-    # -- Misc interactive --
-    SlashCommandSpec(
-        name="share", summary="Share conversation",
-        category="misc", interactive_only=True,
-    ),
-    SlashCommandSpec(
-        name="feedback", summary="Send feedback",
-        category="misc", interactive_only=True,
-    ),
-    SlashCommandSpec(
-        name="upgrade", summary="Check for updates",
-        category="misc", interactive_only=True,
-    ),
-    SlashCommandSpec(
-        name="stats", summary="Show usage statistics",
-        category="misc", interactive_only=True,
-    ),
-    SlashCommandSpec(
-        name="files", summary="List files in context",
-        category="misc", interactive_only=True,
-    ),
-    SlashCommandSpec(
-        name="summary", summary="Summarize conversation",
-        category="misc", interactive_only=True,
-    ),
-    SlashCommandSpec(
-        name="desktop", summary="Open desktop app",
-        category="misc", interactive_only=True,
-    ),
-    SlashCommandSpec(
-        name="advisor", summary="AI advisor mode",
-        category="misc", interactive_only=True,
-    ),
-    SlashCommandSpec(
-        name="stickers", summary="Show sticker collection",
-        category="misc", interactive_only=True,
-    ),
-    SlashCommandSpec(
-        name="insights", summary="Show project insights",
-        category="misc", interactive_only=True,
-    ),
-    SlashCommandSpec(
-        name="thinkback", summary="Review thinking process",
-        category="misc", interactive_only=True,
-    ),
-    SlashCommandSpec(
-        name="release-notes", summary="Show release notes",
-        category="misc", interactive_only=True,
-    ),
-    SlashCommandSpec(
-        name="security-review", summary="Run security review",
-        category="misc", interactive_only=True,
-    ),
-    SlashCommandSpec(
-        name="keybindings", summary="Show or edit keybindings",
-        category="misc", interactive_only=True,
-    ),
-    SlashCommandSpec(
-        name="privacy-settings", summary="Manage privacy settings",
-        category="misc", interactive_only=True,
-    ),
-    SlashCommandSpec(
-        name="ide", summary="Open IDE integration",
-        category="misc", interactive_only=True,
-    ),
-    SlashCommandSpec(
-        name="tag", summary="Tag current conversation",
-        argument_hint="[tag_name]", category="misc", interactive_only=True,
-    ),
-    SlashCommandSpec(
-        name="rename", summary="Rename current session",
-        argument_hint="[new_name]", category="misc", interactive_only=True,
-    ),
-    SlashCommandSpec(
-        name="copy", summary="Copy last response to clipboard",
-        category="misc", interactive_only=True,
-    ),
-    SlashCommandSpec(
-        name="usage", summary="Show detailed usage metrics",
-        category="misc", interactive_only=True,
-    ),
-    SlashCommandSpec(
-        name="color", summary="Change color settings",
-        argument_hint="[setting]", category="misc", interactive_only=True,
-    ),
-    SlashCommandSpec(
-        name="add-dir", summary="Add directory to context",
-        argument_hint="<path>", category="misc", interactive_only=True,
-    ),
+    # -- Workflow --
+    SlashCommandSpec(name="plan", summary="Plan before coding (read-only exploration)", argument_hint="<task>", category="workflow"),
+    SlashCommandSpec(name="commit", summary="Auto-commit with AI message", argument_hint="[message]", category="workflow"),
+    SlashCommandSpec(name="undo", summary="Revert last change (git reset)", argument_hint="[hard|file.py]", category="workflow"),
+    SlashCommandSpec(name="review", summary="AI code review of recent changes", argument_hint="[file|HEAD~N]", category="workflow"),
+    SlashCommandSpec(name="test", summary="Generate tests for a file", argument_hint="<file> [pytest|jest]", category="workflow"),
+    SlashCommandSpec(name="init-project", aliases=["scaffold"], summary="Scaffold project from template", argument_hint="[react|django|fastapi|express|cli]", category="workflow"),
 ]
 
 
@@ -341,10 +95,7 @@ SLASH_COMMAND_SPECS: list[SlashCommandSpec] = [
 # ---------------------------------------------------------------------------
 
 class CommandRegistry:
-    """Registry of all available slash commands.
-
-    Maps to: rust/crates/commands/src/lib.rs (command registry)
-    """
+    """Registry of slash commands — only commands with working handlers."""
 
     def __init__(self) -> None:
         self._commands: dict[str, SlashCommandSpec] = {}
@@ -356,7 +107,6 @@ class CommandRegistry:
             self._commands[spec.name] = spec
             for alias in spec.aliases:
                 self._commands[alias] = spec
-            # Index by category
             cat = spec.category
             if cat not in self._by_category:
                 self._by_category[cat] = []
@@ -366,7 +116,6 @@ class CommandRegistry:
         return self._commands.get(name.lstrip("/").lower())
 
     def all_specs(self) -> list[SlashCommandSpec]:
-        """Get all unique command specs (no alias duplicates)."""
         seen: set[str] = set()
         specs: list[SlashCommandSpec] = []
         for spec in self._commands.values():
@@ -384,32 +133,15 @@ class CommandRegistry:
     def categories(self) -> list[str]:
         return sorted(self._by_category.keys())
 
-    def resume_supported(self) -> list[SlashCommandSpec]:
-        """Get commands that support --resume mode."""
-        return [s for s in self.all_specs() if s.resume_supported]
-
-    def interactive_only(self) -> list[SlashCommandSpec]:
-        """Get commands that only work in interactive REPL."""
-        return [s for s in self.all_specs() if s.interactive_only]
-
     def register_plugin_command(self, name: str, summary: str = "") -> None:
-        """Register a command from a plugin."""
-        spec = SlashCommandSpec(
-            name=name, summary=summary,
-            source="plugin", category="plugin",
-        )
+        spec = SlashCommandSpec(name=name, summary=summary, source="plugin", category="plugin")
         self._commands[name] = spec
 
     def register_skill_command(self, name: str, summary: str = "") -> None:
-        """Register a command from a skill definition."""
-        spec = SlashCommandSpec(
-            name=name, summary=summary,
-            source="skill", category="skill",
-        )
+        spec = SlashCommandSpec(name=name, summary=summary, source="skill", category="skill")
         self._commands[name] = spec
 
 
-# Module singleton
 _registry: CommandRegistry | None = None
 
 

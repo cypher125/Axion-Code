@@ -264,8 +264,8 @@ def render_help(
         specs = reg.by_category(cat)
         if not specs:
             continue
-        if not include_interactive_only:
-            specs = [s for s in specs if not s.interactive_only]
+        if False:  # all commands are real now
+            pass
         if not specs:
             continue
 
@@ -278,7 +278,7 @@ def render_help(
             aliases = ""
             if spec.aliases:
                 aliases = f" (aliases: {', '.join('/' + a for a in spec.aliases)})"
-            interactive = " [interactive]" if spec.interactive_only else ""
+            interactive = ""
             lines.append(f"    /{spec.name}{hint} — {spec.summary}{aliases}{interactive}")
 
         lines.append("")
@@ -320,7 +320,7 @@ def render_help_detail(
         lines.append(f"  Aliases: {', '.join('/' + a for a in spec.aliases)}")
     if spec.resume_supported:
         lines.append("  Supports --resume mode")
-    if spec.interactive_only:
+    if False:
         lines.append("  Interactive REPL only")
     lines.append(f"  Category: {spec.category}")
 

@@ -132,6 +132,43 @@ def pricing_for_model(model: str | None) -> ModelPricing | None:
         )
     if "sonnet" in normalized:
         return ModelPricing.default_sonnet_tier()
+    # OpenAI models
+    if "gpt-4o-mini" in normalized or "4o-mini" in normalized:
+        return ModelPricing(
+            input_cost_per_million=0.15,
+            output_cost_per_million=0.60,
+            cache_creation_cost_per_million=0.075,
+            cache_read_cost_per_million=0.075,
+        )
+    if "gpt-4o" in normalized or "4o" in normalized:
+        return ModelPricing(
+            input_cost_per_million=2.50,
+            output_cost_per_million=10.0,
+            cache_creation_cost_per_million=1.25,
+            cache_read_cost_per_million=1.25,
+        )
+    if normalized in ("o1", "o3"):
+        return ModelPricing(
+            input_cost_per_million=15.0,
+            output_cost_per_million=60.0,
+            cache_creation_cost_per_million=7.5,
+            cache_read_cost_per_million=7.5,
+        )
+    if "o3-mini" in normalized:
+        return ModelPricing(
+            input_cost_per_million=1.10,
+            output_cost_per_million=4.40,
+            cache_creation_cost_per_million=0.55,
+            cache_read_cost_per_million=0.55,
+        )
+    # xAI
+    if "grok" in normalized:
+        return ModelPricing(
+            input_cost_per_million=5.0,
+            output_cost_per_million=15.0,
+            cache_creation_cost_per_million=2.5,
+            cache_read_cost_per_million=2.5,
+        )
     return None
 
 

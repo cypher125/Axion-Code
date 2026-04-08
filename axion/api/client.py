@@ -16,14 +16,36 @@ from axion.api.types import MessageRequest, MessageResponse, StreamEvent
 
 # Model alias resolution
 MODEL_ALIASES: dict[str, str] = {
+    # Anthropic
     "opus": "claude-opus-4-6",
     "sonnet": "claude-sonnet-4-6",
     "haiku": "claude-haiku-4-5",
-    "local": "llama3.1",
-    # Claude Code format aliases (e.g. "opus[1m]", "sonnet[1m]")
+    # Claude Code format (e.g. "opus[1m]")
     "opus[1m]": "claude-opus-4-6",
     "sonnet[1m]": "claude-sonnet-4-6",
     "haiku[1m]": "claude-haiku-4-5",
+    # OpenAI
+    "gpt4": "gpt-4o",
+    "gpt4o": "gpt-4o",
+    "gpt-4": "gpt-4o",
+    "4o": "gpt-4o",
+    "o1": "o1",
+    "o3": "o3",
+    "o3-mini": "o3-mini",
+    "gpt-4o-mini": "gpt-4o-mini",
+    "4o-mini": "gpt-4o-mini",
+    # xAI
+    "grok": "grok-2",
+    "grok2": "grok-2",
+    # Ollama / local
+    "local": "llama3.1",
+    "llama": "llama3.1",
+    "mistral": "mistral",
+    "codellama": "codellama",
+    "deepseek": "deepseek-coder-v2",
+    "phi": "phi3",
+    "gemma": "gemma2",
+    "qwen": "qwen2.5-coder",
 }
 
 
