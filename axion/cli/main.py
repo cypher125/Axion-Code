@@ -38,6 +38,13 @@ from axion.api.client import (
     resolve_model_alias,
 )
 from axion.cli.render import CLAW_THEME, MarkdownStreamState, TerminalRenderer
+from axion.cli.tui import (
+    render_permission_panel,
+    render_tool_panel,
+    render_tool_result_panel,
+    render_turn_cost,
+    render_welcome_screen,
+)
 from axion.commands.handlers.agents import handle_agents_command
 from axion.commands.handlers.mcp import handle_mcp_command
 from axion.commands.handlers.plugins import handle_plugins_command
@@ -194,18 +201,15 @@ class CliPermissionPrompter:
         # Stop the spinner before showing the prompt
         if self._stop_spinner_fn:
             self._stop_spinner_fn()
-        console.print()
-        console.print("[bold yellow]Permission required[/bold yellow]")
-        console.print(f"  Tool: [bold]{request.tool_name}[/bold]")
-        console.print(f"  Mode: {request.current_mode.value} → needs {request.required_mode.value}")
-        if request.reason:
-            console.print(f"  Reason: {request.reason}")
-        if request.input_json:
-            display = request.input_json[:300]
-            if len(request.input_json) > 300:
-                display += "..."
-            console.print(f"  Input: [dim]{display}[/dim]")
-        console.print()
+
+        render_permission_panel(
+            console,
+            tool_name=request.tool_name,
+            mode=request.current_mode.value,
+            required=request.required_mode.value,
+            reason=request.reason,
+            input_preview=request.input_json,
+        )
 
         try:
             answer = console.input("[yellow]Allow? [y/N/a(lways)]: [/yellow]").strip().lower()
@@ -1190,13 +1194,18 @@ async def run_repl(
         remaining = repl_md_stream.flush(renderer)
         if remaining:
             console.print(Markdown(remaining))
-        _render_tool_use(tool_name, tool_input)
+        # Parse input for panel display
+        try:
+            params = json.loads(tool_input) if tool_input else {}
+        except (json.JSONDecodeError, TypeError):
+            params = {"input": tool_input[:200]} if tool_input else {}
+        render_tool_panel(console, tool_name, params)
 
     def on_tool_result_cb(tool_name: str, output: str, is_error: bool) -> None:
         """Show tool result in real-time as it completes."""
         if output_format == "json":
             return
-        _render_tool_result(tool_name, output, is_error)
+        render_tool_result_panel(console, tool_name, output, is_error)
 
     thinking_started = [False]  # mutable flag for closure
 
@@ -1226,15 +1235,20 @@ async def run_repl(
     if resume:
         runtime.usage_tracker = UsageTracker.from_session(session)
 
-    # Welcome banner
+    # Welcome screen with TUI
     if output_format != "json":
-        renderer.render_welcome(__version__, runtime.model)
         perm_display = runtime.permission_policy.mode.value
-        console.print(f"[dim]Permissions: {perm_display} | Session: {session.session_id[:8]}...[/dim]")
         branch = _git_branch()
-        if branch:
-            console.print(f"[dim]Git branch: {branch}[/dim]")
-        console.print()
+        render_welcome_screen(
+            console,
+            version=__version__,
+            model=runtime.model,
+            session_id=session.session_id,
+            permission_mode=perm_display,
+            git_branch=branch,
+            resumed=bool(resume),
+            message_count=session.message_count(),
+        )
 
     # REPL history
     history_dir = Path.home() / ".axion"
@@ -1349,7 +1363,7 @@ async def run_repl(
                     console.print()  # Newline after streaming
                     # Tool use/results are now shown in real-time via callbacks
 
-                    # Cost line (use model-specific pricing)
+                    # Cost line with TUI styling
                     if summary.usage.total_tokens() > 0:
                         from axion.runtime.usage import pricing_for_model
                         model_pricing = pricing_for_model(runtime.model)
@@ -1357,10 +1371,11 @@ async def run_repl(
                             cost = summary.usage.estimate_cost_usd_with_pricing(model_pricing)
                         else:
                             cost = summary.usage.estimate_cost_usd()
-                        console.print(
-                            f"[dim]Tokens: {summary.usage.total_tokens():,} | "
-                            f"Cost: {format_usd(cost.total_cost_usd())} | "
-                            f"Turn {runtime.usage_tracker.turn_count}[/dim]"
+                        render_turn_cost(
+                            console,
+                            tokens=summary.usage.total_tokens(),
+                            cost=cost.total_cost_usd(),
+                            turn=runtime.usage_tracker.turn_count,
                         )
 
             except KeyboardInterrupt:
