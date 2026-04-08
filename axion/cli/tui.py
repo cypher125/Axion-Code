@@ -111,33 +111,82 @@ def render_welcome_screen(
     git_branch: str | None = None,
     resumed: bool = False,
     message_count: int = 0,
+    cwd: str = "",
 ) -> None:
-    """Render the full welcome screen with logo and info."""
+    """Render the Claude Code-style welcome screen with two columns."""
+    import os
+    import random
+
     console.print()
 
-    # Logo
-    console.print(AXION_LOGO_SMALL)
-    console.print()
+    # Mascot
+    mascot = random.choice([
+        "[bold cyan]    ◆ ◆\n   ╱███╲\n  ╱█████╲\n   ╲███╱\n    ▀▀▀[/bold cyan]",
+        "[bold cyan]   ╭───╮\n   │ ◆ │\n   ╰─┬─╯\n     │\n   ╭─┴─╮[/bold cyan]",
+        "[bold cyan]   ┌─┐\n   │▪│\n   └┬┘\n  ╔═╩═╗\n  ╚═══╝[/bold cyan]",
+    ])
 
-    # Info panel
-    info_lines: list[str] = [
-        f"  [bold]Version[/bold]     v{version}",
-        f"  [bold]Model[/bold]       {model}",
-        f"  [bold]Session[/bold]     {session_id[:12]}...",
-        f"  [bold]Permissions[/bold] {permission_mode}",
+    # Left column: version + mascot
+    left_lines = [
+        f"[dim]- - -[/dim] [bold]Axion Code[/bold] v{version} [dim]- - -[/dim]",
+        "",
     ]
-    if git_branch:
-        info_lines.append(f"  [bold]Branch[/bold]      {git_branch}")
     if resumed:
-        info_lines.append(f"  [bold]Resumed[/bold]     {message_count} messages")
+        left_lines.append("    Welcome back!")
+    else:
+        left_lines.append("    Welcome!")
+    left_lines.append("")
+    left_lines.append(mascot)
+    left_lines.append("")
+    left_lines.append(f"    [bold]{model}[/bold]")
+    left_lines.append(f"    [dim]{cwd or os.getcwd()}[/dim]")
+
+    # Right column: tips + recent activity
+    right_lines = [
+        "[bold yellow]Quick start[/bold yellow]",
+    ]
+
+    tips = [
+        '"Fix the bug in auth.py"',
+        '"Add tests for the API"',
+        '"Explain this codebase"',
+        '"Refactor this function"',
+        '"Search for all TODO comments"',
+        '"Read package.json and summarize"',
+    ]
+    selected_tips = random.sample(tips, min(3, len(tips)))
+    for tip in selected_tips:
+        right_lines.append(f"  [dim]Try:[/dim] {tip}")
+
+    right_lines.append("")
+    right_lines.append("[bold yellow]Commands[/bold yellow]")
+    right_lines.append("  [bold]/plan[/bold] [dim]Design before coding[/dim]")
+    right_lines.append("  [bold]/model[/bold] [dim]Switch AI model[/dim]")
+    right_lines.append("  [bold]/cost[/bold] [dim]See token usage[/dim]")
+    right_lines.append("  [bold]/export[/bold] [dim]Save transcript[/dim]")
+    right_lines.append("  [dim]... /help for more[/dim]")
+
+    if resumed:
+        right_lines.append("")
+        right_lines.append("[bold yellow]Session[/bold yellow]")
+        right_lines.append(f"  [dim]Resumed {message_count} messages[/dim]")
+        right_lines.append(f"  [dim]ID: {session_id[:12]}[/dim]")
+
+    # Build two-column layout
+    left_text = "\n".join(left_lines)
+    right_text = "\n".join(right_lines)
+
+    # Use a table for side-by-side layout
+    layout = Table(show_header=False, show_edge=False, box=None, padding=(0, 3), expand=True)
+    layout.add_column(ratio=1, justify="center")
+    layout.add_column(ratio=1)
+    layout.add_row(left_text, right_text)
 
     console.print(Panel(
-        "\n".join(info_lines),
-        border_style="cyan",
-        padding=(0, 1),
+        layout,
+        border_style="dim",
+        padding=(1, 2),
     ))
-
-    console.print("  [dim]Type[/dim] [bold]/help[/bold] [dim]for commands,[/dim] [bold]Ctrl+C[/bold] [dim]to interrupt[/dim]")
     console.print()
 
 

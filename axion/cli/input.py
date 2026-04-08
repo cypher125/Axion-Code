@@ -148,10 +148,24 @@ class InputSession:
         self._status_turn = turn
 
     async def prompt(self, prompt_text: str = "axion") -> str | None:
-        """Get input with a clean prompt and fixed toolbar."""
+        """Get input with a clean prompt, placeholder hint, and fixed toolbar."""
+        import random
+
+        placeholders = [
+            "Try: fix the bug in main.py",
+            "Try: explain this codebase",
+            "Try: add tests for the API",
+            "Try: search for TODO comments",
+            "Try: read README.md and summarize",
+            "Try: /plan add authentication",
+            "Try: /help for all commands",
+        ]
+        hint = random.choice(placeholders)
+
         try:
             result = await self.session.prompt_async(
                 HTML(f"<prompt>{prompt_text} &gt; </prompt>"),
+                placeholder=HTML(f"<style bg='' fg='#555555'>{hint}</style>"),
             )
             return result
         except (EOFError, KeyboardInterrupt):

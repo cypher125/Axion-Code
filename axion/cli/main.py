@@ -1244,6 +1244,7 @@ async def run_repl(
             git_branch=branch,
             resumed=bool(resume),
             message_count=session.message_count(),
+            cwd=str(Path.cwd()),
         )
 
     # Input session with textarea styling
