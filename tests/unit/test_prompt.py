@@ -73,7 +73,7 @@ def test_prompt_includes_instruction_files(tmp_path):
     builder = SystemPromptBuilder(project_context=ctx)
     rendered = builder.render()
     assert "Always use type hints" in rendered
-    assert "Claude instructions" in rendered
+    assert "Project instructions" in rendered
 
 
 def test_prompt_length():

@@ -81,14 +81,16 @@ class ProjectContext:
 # ---------------------------------------------------------------------------
 
 def discover_instruction_files(cwd: Path) -> list[ContextFile]:
-    """Discover CLAUDE.md and instruction files walking up the directory tree.
+    """Discover AXION.md and instruction files walking up the directory tree.
 
     For each directory from filesystem root to cwd, checks:
-      - CLAUDE.md
-      - CLAUDE.local.md
-      - .axion/CLAUDE.md
+      - AXION.md (primary)
+      - AXION.local.md
+      - .axion/AXION.md
       - .axion/instructions.md
-      - .claude/CLAUDE.md (compatibility)
+      - CLAUDE.md (backwards compatible)
+      - CLAUDE.local.md
+      - .claude/CLAUDE.md
 
     Deduplicates by content hash to avoid including identical files
     from different scopes.
@@ -106,10 +108,14 @@ def discover_instruction_files(cwd: Path) -> list[ContextFile]:
     files: list[ContextFile] = []
     for directory in directories:
         for candidate in [
+            # Axion-branded (primary)
+            directory / "AXION.md",
+            directory / "AXION.local.md",
+            directory / ".axion" / "AXION.md",
+            directory / ".axion" / "instructions.md",
+            # Claude-compatible (fallback for existing projects)
             directory / "CLAUDE.md",
             directory / "CLAUDE.local.md",
-            directory / ".axion" / "CLAUDE.md",
-            directory / ".axion" / "instructions.md",
             directory / ".claude" / "CLAUDE.md",
         ]:
             _push_context_file(files, candidate)
@@ -300,7 +306,7 @@ def _render_instruction_files(files: list[ContextFile]) -> str:
     if not files:
         return ""
 
-    sections = ["# Claude instructions"]
+    sections = ["# Project instructions"]
     remaining_chars = MAX_TOTAL_INSTRUCTION_CHARS
 
     for f in files:
@@ -373,7 +379,7 @@ def _render_project_context(ctx: ProjectContext) -> str:
         f"Working directory: {ctx.cwd}",
     ]
     if ctx.instruction_files:
-        bullets.append(f"Claude instruction files discovered: {len(ctx.instruction_files)}.")
+        bullets.append(f"Instruction files discovered: {len(ctx.instruction_files)}.")
     lines.extend(f" - {b}" for b in bullets)
 
     if ctx.git_status:
