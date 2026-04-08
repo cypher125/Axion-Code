@@ -760,27 +760,23 @@ async def _handle_slash_command(
 
     # --- Review ---
     if cmd == "review":
-        # Return the review prompt — the REPL will send it as a turn to the AI
         review_prompt = handle_review_command(args)
         if review_prompt.startswith("REVIEW_MODE:"):
-            session.push_user_text(review_prompt)
-            return ""  # Will be processed as a turn
+            return "__RUN_TURN__:" + review_prompt
         return review_prompt
 
     # --- Test ---
     if cmd == "test":
         test_prompt = handle_test_command(args)
         if test_prompt.startswith("TEST_MODE:"):
-            session.push_user_text(test_prompt)
-            return ""
+            return "__RUN_TURN__:" + test_prompt
         return test_prompt
 
     # --- Init project ---
     if cmd in ("init-project", "scaffold"):
         init_prompt = handle_init_project_command(args)
         if init_prompt.startswith("INIT_PROJECT_MODE:"):
-            session.push_user_text(init_prompt)
-            return ""
+            return "__RUN_TURN__:" + init_prompt
         return init_prompt
 
     # --- Share ---
@@ -899,12 +895,7 @@ async def _handle_slash_command(
 
     # --- Summary ---
     if cmd == "summary":
-        # Ask the AI to summarize the conversation
-        session.push_user_text(
-            "Summarize this entire conversation so far in a brief paragraph. "
-            "What topics were discussed, what was accomplished, and what's the current state?"
-        )
-        return ""  # Will be processed as a turn
+        return "__RUN_TURN__:Summarize this entire conversation so far in a brief paragraph. What topics were discussed, what was accomplished, and what's the current state?"
 
     # --- Stats ---
     if cmd == "stats":
@@ -929,8 +920,9 @@ async def _handle_slash_command(
     # --- Security review ---
     if cmd == "security-review":
         file_target = args.strip() or ""
-        session.push_user_text(
-            f"SECURITY_REVIEW_MODE: Perform a security audit of {'the file ' + file_target if file_target else 'the recent changes'}.\n\n"
+        target_desc = f"the file {file_target}" if file_target else "the recent changes"
+        return (
+            f"__RUN_TURN__:SECURITY_REVIEW_MODE: Perform a security audit of {target_desc}.\n\n"
             "Check for:\n"
             "1. SQL injection vulnerabilities\n"
             "2. XSS (cross-site scripting)\n"
@@ -942,7 +934,6 @@ async def _handle_slash_command(
             "8. Path traversal\n\n"
             "Rate each finding as CRITICAL, HIGH, MEDIUM, or LOW."
         )
-        return ""
 
     # --- Upgrade (tier upgrade) ---
     if cmd == "upgrade":
@@ -1609,14 +1600,21 @@ async def run_repl(
                     # Exit signal
                     console.print("[dim]Goodbye![/dim]")
                     break
-                console.print(f"[dim]{response}[/dim]")
 
-                # Persist session after commands that mutate state
-                try:
-                    session.save()
-                except Exception:
-                    pass
-                continue
+                # Check if the command wants to trigger an AI turn
+                if isinstance(response, str) and response.startswith("__RUN_TURN__:"):
+                    # Extract the prompt and send it as a regular turn
+                    user_input = response[len("__RUN_TURN__:"):]
+                    # Fall through to the "Send to model" section below
+                else:
+                    if response:
+                        console.print(f"[dim]{response}[/dim]")
+                    # Persist session after commands that mutate state
+                    try:
+                        session.save()
+                    except Exception:
+                        pass
+                    continue
 
             # License: enforce turn limit for free tier
             if not license_info.is_active:
