@@ -1,7 +1,10 @@
-"""Interactive input handling with styled textarea-like input box.
+"""Interactive input with fixed bottom toolbar and clean prompt.
 
-The input area looks like a bordered text box with a thick blinking cursor,
-similar to Claude Code's terminal UI.
+Simple, reliable approach:
+- Clean prompt (no box-drawing — they break with line wrapping)
+- Fixed bottom toolbar showing model, tokens, cost
+- Block cursor
+- Tab completion for slash commands
 """
 
 from __future__ import annotations
@@ -34,21 +37,15 @@ SLASH_COMMANDS = [
 MODEL_COMPLETIONS = [
     "opus", "sonnet", "haiku",
     "claude-opus-4-6", "claude-sonnet-4-6", "claude-haiku-4-5",
-    "gpt-4o", "gpt-4-turbo", "o1", "o3",
-    "grok-2", "llama3.1", "mistral",
-]
-
-PERMISSION_COMPLETIONS = [
-    "read-only", "workspace-write", "danger-full-access", "prompt", "allow",
+    "gpt-4o", "o1", "o3", "grok-2", "llama3.1", "mistral",
 ]
 
 
 class SlashCommandCompleter(Completer):
-    """Context-aware completer for slash commands and their arguments."""
+    """Context-aware completer for slash commands."""
 
     def get_completions(self, document: Document, complete_event: Any) -> list[Completion]:
         text = document.text_before_cursor.lstrip()
-
         if not text.startswith("/"):
             return []
 
@@ -56,43 +53,28 @@ class SlashCommandCompleter(Completer):
         cmd = parts[0].lower()
 
         if len(parts) == 1 and not text.endswith(" "):
-            return self._complete_command_name(cmd)
+            return [
+                Completion(c, start_position=-len(cmd))
+                for c in SLASH_COMMANDS if c.startswith(cmd)
+            ]
 
         arg_text = parts[1] if len(parts) > 1 else ""
-        return self._complete_arguments(cmd, arg_text)
-
-    def _complete_command_name(self, partial: str) -> list[Completion]:
-        completions = []
-        for cmd in SLASH_COMMANDS:
-            if cmd.startswith(partial):
-                completions.append(Completion(cmd, start_position=-len(partial)))
-        return completions
-
-    def _complete_arguments(self, cmd: str, arg_text: str) -> list[Completion]:
         candidates: list[str] = []
-
         if cmd == "/model":
             candidates = MODEL_COMPLETIONS
-        elif cmd == "/permissions":
-            candidates = PERMISSION_COMPLETIONS
-        elif cmd == "/mcp":
-            candidates = ["list", "show", "help"]
-        elif cmd == "/plugins":
-            candidates = ["list", "install", "enable", "disable", "uninstall"]
         elif cmd == "/session":
             candidates = ["list", "show", "fork", "switch", "delete", "new"]
         elif cmd == "/plan":
             candidates = ["execute", "exit", "status"]
+        elif cmd == "/plugins":
+            candidates = ["list", "install", "enable", "disable"]
         elif cmd == "/resume":
             candidates = ["latest"]
-        else:
-            return []
 
-        completions = []
-        for c in candidates:
-            if c.startswith(arg_text.lower()):
-                completions.append(Completion(c, start_position=-len(arg_text)))
-        return completions
+        return [
+            Completion(c, start_position=-len(arg_text))
+            for c in candidates if c.startswith(arg_text.lower())
+        ]
 
 
 # ---------------------------------------------------------------------------
@@ -100,130 +82,76 @@ class SlashCommandCompleter(Completer):
 # ---------------------------------------------------------------------------
 
 def create_key_bindings() -> KeyBindings:
-    """Create custom key bindings for the REPL."""
     bindings = KeyBindings()
 
     @bindings.add(Keys.ControlD)
-    def exit_handler(event: Any) -> None:
+    def _(event: Any) -> None:
         event.app.exit(exception=EOFError())
-
-    @bindings.add(Keys.Escape, Keys.Enter)
-    def newline_handler(event: Any) -> None:
-        event.current_buffer.insert_text("\n")
 
     return bindings
 
 
 # ---------------------------------------------------------------------------
-# Styled input — textarea-like box with thick cursor
+# Style
 # ---------------------------------------------------------------------------
 
-AXION_INPUT_STYLE = Style.from_dict({
-    # Prompt text
+INPUT_STYLE = Style.from_dict({
     "prompt": "bold cyan",
-    "prompt.label": "bold cyan",
-
-    # Input text area — looks like a bordered box
-    "": "fg:white",
-
-    # Bottom toolbar
-    "bottom-toolbar": "bg:#333333 fg:#888888",
-    "bottom-toolbar.text": "fg:#888888",
-
-    # Cursor — block style (thick)
-    "cursor-column": "bg:cyan",
+    "bottom-toolbar": "bg:#1a1a2e fg:#888888",
+    "bottom-toolbar.text": "bg:#1a1a2e fg:#888888",
 })
 
 
 # ---------------------------------------------------------------------------
-# Input session with textarea styling
+# Input session
 # ---------------------------------------------------------------------------
 
 class InputSession:
-    """Manages the REPL input with a textarea-like bordered appearance.
+    """Clean input with fixed bottom toolbar showing live stats."""
 
-    Features:
-    - Bordered input area that looks like a text editor
-    - Block (thick) cursor instead of thin line
-    - Tab completion for slash commands
-    - History with arrow keys
-    - Ctrl+D to exit, Alt+Enter for newline
-    - Fixed bottom toolbar showing model, tokens, and cost
-    """
-
-    def __init__(
-        self,
-        history_path: Path | None = None,
-        multiline: bool = False,
-    ) -> None:
+    def __init__(self, history_path: Path | None = None) -> None:
         history = FileHistory(str(history_path)) if history_path else None
-        self._bindings = create_key_bindings()
 
-        # Status bar state — updated after each turn
-        self._status_model: str = ""
-        self._status_tokens: int = 0
-        self._status_cost: float = 0.0
-        self._status_turn: int = 0
+        self._status_model = ""
+        self._status_tokens = 0
+        self._status_cost = 0.0
+        self._status_turn = 0
 
         self.session: PromptSession[str] = PromptSession(
             history=history,
             completer=SlashCommandCompleter(),
             complete_while_typing=True,
-            key_bindings=self._bindings,
-            style=AXION_INPUT_STYLE,
-            multiline=multiline,
+            key_bindings=create_key_bindings(),
+            style=INPUT_STYLE,
             cursor=CursorShape.BLOCK,
-            prompt_continuation="  ... ",
-            bottom_toolbar=self._build_toolbar,
+            bottom_toolbar=self._toolbar,
         )
 
-    def _build_toolbar(self) -> HTML:
-        """Build the bottom toolbar with current session stats."""
-        if not self._status_model:
+    def _toolbar(self) -> HTML:
+        """Build the fixed bottom toolbar content."""
+        if self._status_turn == 0:
             return HTML(
-                '<bottom-toolbar>'
-                '  <b>axion</b> | Enter to send, Alt+Enter for newline, Ctrl+D to exit'
-                '</bottom-toolbar>'
+                " <b>axion</b> │ /help for commands │ Ctrl+C to interrupt"
             )
-        cost_str = f"${self._status_cost:.4f}" if self._status_cost > 0 else "$0"
         return HTML(
-            f'<bottom-toolbar>'
-            f'  <b>{self._status_model}</b>'
-            f' | turn {self._status_turn}'
-            f' | {self._status_tokens:,} tokens'
-            f' | {cost_str}'
-            f' | Enter to send, Alt+Enter for newline'
-            f'</bottom-toolbar>'
+            f" <b>{self._status_model}</b>"
+            f" │ turn {self._status_turn}"
+            f" │ {self._status_tokens:,} tokens"
+            f" │ ${self._status_cost:.4f}"
         )
 
-    def update_status(
-        self,
-        model: str,
-        tokens: int,
-        cost: float,
-        turn: int,
-    ) -> None:
-        """Update the bottom toolbar with the latest turn stats."""
+    def update_status(self, model: str, tokens: int, cost: float, turn: int) -> None:
+        """Update toolbar data (called after each turn)."""
         self._status_model = model
         self._status_tokens = tokens
         self._status_cost = cost
         self._status_turn = turn
 
-    async def prompt(self, prompt_text: str = "> ") -> str | None:
-        """Get input from the user with textarea styling.
-
-        Returns None on EOF/interrupt.
-        """
+    async def prompt(self, prompt_text: str = "axion") -> str | None:
+        """Get input with a clean prompt and fixed toolbar."""
         try:
-            # Build the prompt with a box-like appearance
-            prompt_html = HTML(
-                f'<prompt>╭─ <prompt.label>{prompt_text.strip()}</prompt.label> '
-                f'─────────────────────────────────────────╮\n'
-                f'│ </prompt>'
-            )
             result = await self.session.prompt_async(
-                prompt_html,
-                rprompt=HTML('<prompt>│</prompt>'),
+                HTML(f"<prompt>{prompt_text} &gt; </prompt>"),
             )
             return result
         except (EOFError, KeyboardInterrupt):
