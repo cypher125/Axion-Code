@@ -474,7 +474,11 @@ def _build_runtime(
     cfg = config or _load_config()
 
     # Resolve model: CLI flag -> config -> env -> auto-detect from saved keys
-    effective_model = resolve_model_alias(model)
+    if model:
+        effective_model = resolve_model_alias(model)
+    else:
+        effective_model = resolve_model_alias(DEFAULT_MODEL)
+
     if effective_model == resolve_model_alias(DEFAULT_MODEL):
         # User didn't specify a model — check config, then auto-detect
         if cfg.feature_config.model:

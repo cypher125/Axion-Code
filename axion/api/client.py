@@ -56,11 +56,14 @@ class ProviderKind(enum.Enum):
     OLLAMA = "ollama"
 
 
-def resolve_model_alias(model: str) -> str:
+def resolve_model_alias(model: str | None) -> str:
     """Resolve short model aliases to full model IDs.
 
     Handles Claude Code format like "opus[1m]", "sonnet[1m]".
+    Returns default model if None.
     """
+    if not model:
+        return "claude-sonnet-4-6"
     lower = model.lower().strip()
 
     # Direct match
