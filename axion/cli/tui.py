@@ -20,17 +20,19 @@ from rich.table import Table
 # Axion ASCII Logo
 # ---------------------------------------------------------------------------
 
-# Neural network / node graph logo
+# Neural network / node graph logo — multi-layer connected nodes
 AXION_LOGO_SMALL = (
-    "[#8892b0]           ●[/#8892b0][#00d4aa]─────[/#00d4aa][#8892b0]●[/#8892b0]\n"
-    "[#00d4aa]          ╱ ╲   ╱[/#00d4aa]\n"
-    "[#8892b0]         ●[/#8892b0][#00d4aa]───[bold #64ffda]◆[/bold #64ffda]──[/#00d4aa][#8892b0]●[/#8892b0]\n"
-    "[#00d4aa]        ╱ ╱ ╲ ╲[/#00d4aa]\n"
-    "[#8892b0]       ●[/#8892b0][#00d4aa]─╱───╲─[/#00d4aa][#8892b0]●[/#8892b0]\n"
-    "[#00d4aa]        ╲     ╱[/#00d4aa]\n"
-    "[#8892b0]         ●[/#8892b0][#00d4aa]───[/#00d4aa][#8892b0]●[/#8892b0]\n"
+    "[#8892b0]       ⬡[/#8892b0][#00d4aa]━━━━━━━[/#00d4aa][#8892b0]⬡[/#8892b0]\n"
+    "[#00d4aa]      ╱ ╲       ╱ ╲[/#00d4aa]\n"
+    "[#8892b0]    ⬡[/#8892b0][#00d4aa]───╲─────╱───[/#00d4aa][#8892b0]⬡[/#8892b0]\n"
+    "[#00d4aa]     ╲   ╲   ╱   ╱[/#00d4aa]\n"
+    "[#00d4aa]      ╲   [bold #64ffda]⬢[/bold #64ffda]   ╱[/#00d4aa]\n"
+    "[#00d4aa]      ╱   ╱ ╲   ╲[/#00d4aa]\n"
+    "[#8892b0]    ⬡[/#8892b0][#00d4aa]───╱─────╲───[/#00d4aa][#8892b0]⬡[/#8892b0]\n"
+    "[#00d4aa]      ╲ ╱       ╲ ╱[/#00d4aa]\n"
+    "[#8892b0]       ⬡[/#8892b0][#00d4aa]━━━━━━━[/#00d4aa][#8892b0]⬡[/#8892b0]\n"
     "\n"
-    "[bold #64ffda]       A X I O N[/bold #64ffda]"
+    "[bold #64ffda]      A X I O N[/bold #64ffda]"
 )
 
 AXION_LOGO_MINI = "[bold #00d4aa]◆ AXION[/bold #00d4aa]"
@@ -127,13 +129,13 @@ def render_welcome_screen(
 
     console.print()
 
-    # Network node graph matching the logo
+    # Network graph matching the logo
     mascot = (
-        "[#8892b0]     ●[/#8892b0][#00d4aa]───[/#00d4aa][#8892b0]●[/#8892b0]\n"
-        "[#00d4aa]    ╱ ╲ ╱[/#00d4aa]\n"
-        "[#8892b0]   ●[/#8892b0][#00d4aa]─[bold #64ffda]◆[/bold #64ffda]─[/#00d4aa][#8892b0]●[/#8892b0]\n"
-        "[#00d4aa]    ╲ ╱ ╲[/#00d4aa]\n"
-        "[#8892b0]     ●[/#8892b0][#00d4aa]───[/#00d4aa][#8892b0]●[/#8892b0]"
+        "[#8892b0]     ⬡[/#8892b0][#00d4aa]━━━[/#00d4aa][#8892b0]⬡[/#8892b0]\n"
+        "[#00d4aa]    ╱ ╲ ╱ ╲[/#00d4aa]\n"
+        "[#8892b0]   ⬡[/#8892b0][#00d4aa]─[bold #64ffda]⬢[/bold #64ffda]─[/#00d4aa][#8892b0]⬡[/#8892b0]\n"
+        "[#00d4aa]    ╲ ╱ ╲ ╱[/#00d4aa]\n"
+        "[#8892b0]     ⬡[/#8892b0][#00d4aa]━━━[/#00d4aa][#8892b0]⬡[/#8892b0]"
     )
 
     # Left column: version + mascot
