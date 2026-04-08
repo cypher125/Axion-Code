@@ -148,6 +148,7 @@ class InputSession:
     - Tab completion for slash commands
     - History with arrow keys
     - Ctrl+D to exit, Alt+Enter for newline
+    - Fixed bottom toolbar showing model, tokens, and cost
     """
 
     def __init__(
@@ -158,6 +159,12 @@ class InputSession:
         history = FileHistory(str(history_path)) if history_path else None
         self._bindings = create_key_bindings()
 
+        # Status bar state — updated after each turn
+        self._status_model: str = ""
+        self._status_tokens: int = 0
+        self._status_cost: float = 0.0
+        self._status_turn: int = 0
+
         self.session: PromptSession[str] = PromptSession(
             history=history,
             completer=SlashCommandCompleter(),
@@ -167,7 +174,40 @@ class InputSession:
             multiline=multiline,
             cursor=CursorShape.BLOCK,
             prompt_continuation="  ... ",
+            bottom_toolbar=self._build_toolbar,
         )
+
+    def _build_toolbar(self) -> HTML:
+        """Build the bottom toolbar with current session stats."""
+        if not self._status_model:
+            return HTML(
+                '<bottom-toolbar>'
+                '  <b>axion</b> | Enter to send, Alt+Enter for newline, Ctrl+D to exit'
+                '</bottom-toolbar>'
+            )
+        cost_str = f"${self._status_cost:.4f}" if self._status_cost > 0 else "$0"
+        return HTML(
+            f'<bottom-toolbar>'
+            f'  <b>{self._status_model}</b>'
+            f' | turn {self._status_turn}'
+            f' | {self._status_tokens:,} tokens'
+            f' | {cost_str}'
+            f' | Enter to send, Alt+Enter for newline'
+            f'</bottom-toolbar>'
+        )
+
+    def update_status(
+        self,
+        model: str,
+        tokens: int,
+        cost: float,
+        turn: int,
+    ) -> None:
+        """Update the bottom toolbar with the latest turn stats."""
+        self._status_model = model
+        self._status_tokens = tokens
+        self._status_cost = cost
+        self._status_turn = turn
 
     async def prompt(self, prompt_text: str = "> ") -> str | None:
         """Get input from the user with textarea styling.

@@ -1366,12 +1366,28 @@ async def run_repl(
                             cost = summary.usage.estimate_cost_usd_with_pricing(model_pricing)
                         else:
                             cost = summary.usage.estimate_cost_usd()
+                        turn_cost = cost.total_cost_usd()
+                        turn_tokens = summary.usage.total_tokens()
+                        turn_num = runtime.usage_tracker.turn_count
                         render_turn_cost(
                             console,
-                            tokens=summary.usage.total_tokens(),
-                            cost=cost.total_cost_usd(),
-                            turn=runtime.usage_tracker.turn_count,
+                            tokens=turn_tokens,
+                            cost=turn_cost,
+                            turn=turn_num,
                         )
+
+                        # Update the bottom toolbar for next prompt
+                        input_session.update_status(
+                            model=runtime.model,
+                            tokens=turn_tokens,
+                            cost=turn_cost,
+                            turn=turn_num,
+                        )
+
+                    # Visual separator between response and next input
+                    console.print(
+                        "[dim]─────────────────────────────────────────────────[/dim]"
+                    )
 
             except KeyboardInterrupt:
                 _stop_spinner()
