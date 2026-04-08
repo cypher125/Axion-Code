@@ -206,28 +206,72 @@ def render_tool_panel(
     params: dict[str, Any],
     is_start: bool = True,
 ) -> None:
-    """Render a tool invocation or result in a styled panel."""
-    if is_start:
-        # Tool invocation header
-        icon = _tool_icon(tool_name)
-        title = f"{icon} {tool_name}"
+    """Render a tool invocation with diff-style display for Edit/Write."""
+    if not is_start:
+        return
 
-        # Format key parameters
-        lines: list[str] = []
+    icon = _tool_icon(tool_name)
+    title = f"{icon} {tool_name}"
+    lines: list[str] = []
+
+    if tool_name == "Edit" and "file_path" in params:
+        # Show edit as a diff with green/red lines
+        file_path = params.get("file_path", "")
+        old_str = params.get("old_string", "")
+        new_str = params.get("new_string", "")
+        lines.append(f"  [dim]file:[/dim] {file_path}")
+        if old_str or new_str:
+            lines.append("")
+            # Show removed lines in red
+            for line in old_str.splitlines()[:8]:
+                lines.append(f"  [red]- {line}[/red]")
+            # Show added lines in green
+            for line in new_str.splitlines()[:8]:
+                lines.append(f"  [green]+ {line}[/green]")
+            if len(old_str.splitlines()) > 8 or len(new_str.splitlines()) > 8:
+                lines.append(f"  [dim]... ({len(old_str.splitlines())} removed, {len(new_str.splitlines())} added)[/dim]")
+
+    elif tool_name == "Write" and "file_path" in params:
+        # Show write with green lines (all new content)
+        file_path = params.get("file_path", "")
+        content = params.get("content", "")
+        line_count = content.count("\n") + 1 if content else 0
+        lines.append(f"  [dim]file:[/dim] {file_path}")
+        lines.append(f"  [dim]lines:[/dim] {line_count}")
+        if content:
+            lines.append("")
+            for line in content.splitlines()[:6]:
+                lines.append(f"  [green]+ {line}[/green]")
+            if line_count > 6:
+                lines.append(f"  [dim]... ({line_count} lines total)[/dim]")
+
+    elif tool_name == "Bash":
+        cmd = params.get("command", "")
+        desc = params.get("description", "")
+        if desc:
+            lines.append(f"  [dim]{desc}[/dim]")
+        lines.append(f"  [bold]$ {cmd}[/bold]")
+
+    elif tool_name == "Read":
+        file_path = params.get("file_path", "")
+        lines.append(f"  [dim]file:[/dim] {file_path}")
+
+    else:
+        # Generic display
         for key, value in list(params.items())[:5]:
             val_str = str(value)
             if len(val_str) > 150:
                 val_str = val_str[:150] + "..."
             lines.append(f"  [dim]{key}:[/dim] {val_str}")
 
-        content = "\n".join(lines) if lines else "[dim]No parameters[/dim]"
-        console.print(Panel(
-            content,
-            title=f"[bold yellow]{title}[/bold yellow]",
-            title_align="left",
-            border_style="yellow",
-            padding=(0, 1),
-        ))
+    content = "\n".join(lines) if lines else "[dim]No parameters[/dim]"
+    console.print(Panel(
+        content,
+        title=f"[bold yellow]{title}[/bold yellow]",
+        title_align="left",
+        border_style="yellow",
+        padding=(0, 1),
+    ))
 
 
 def render_tool_result_panel(
@@ -236,14 +280,54 @@ def render_tool_result_panel(
     output: str,
     is_error: bool = False,
 ) -> None:
-    """Render a tool result in a styled panel."""
+    """Render a tool result with appropriate styling.
+
+    - Edit/Write results: show with dim text (not bold)
+    - Read results: show with line numbers faded
+    - Bash results: stdout normal, stderr red
+    - Errors: red border
+    """
     icon = "✗" if is_error else "✓"
     color = "red" if is_error else "green"
 
     # Truncate long output
     display = output
-    if len(display) > 800:
-        display = display[:800] + "\n... (truncated)"
+    if len(display) > 1200:
+        display = display[:1200] + "\n[dim]... (truncated)[/dim]"
+
+    # Style based on tool type
+    if tool_name in ("Edit", "Write") and not is_error:
+        # Show edit/write result in dim (it's just a confirmation)
+        display = f"[dim]{display}[/dim]"
+    elif tool_name == "Read" and not is_error:
+        # Fade line numbers in read output
+        styled_lines = []
+        for line in display.splitlines()[:40]:
+            # Line numbers are before the tab
+            if "\t" in line:
+                num, rest = line.split("\t", 1)
+                styled_lines.append(f"[dim]{num}[/dim]  {rest}")
+            else:
+                styled_lines.append(f"[dim]{line}[/dim]")
+        display = "\n".join(styled_lines)
+        if len(output.splitlines()) > 40:
+            display += f"\n[dim]... ({len(output.splitlines())} lines total)[/dim]"
+    elif tool_name == "Bash" and not is_error:
+        # Highlight stderr in red within bash output
+        styled_lines = []
+        in_stderr = False
+        for line in display.splitlines():
+            if line.startswith("STDERR:"):
+                in_stderr = True
+                styled_lines.append(f"[red]{line}[/red]")
+            elif in_stderr and line.startswith("Exit code:"):
+                styled_lines.append(f"[yellow]{line}[/yellow]")
+                in_stderr = False
+            elif in_stderr:
+                styled_lines.append(f"[red]{line}[/red]")
+            else:
+                styled_lines.append(line)
+        display = "\n".join(styled_lines)
 
     console.print(Panel(
         display,
