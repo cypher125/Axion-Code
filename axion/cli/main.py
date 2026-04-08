@@ -104,6 +104,41 @@ SESSION_DIR = ".axion/sessions"
 HISTORY_FILE = ".axion/repl_history"
 MAX_SESSION_LIST = 20
 
+
+def _auto_detect_model() -> str:
+    """Auto-detect which model to use based on available API keys.
+
+    Checks saved keys and env vars in order: Anthropic > OpenAI > xAI > Ollama.
+    Returns the default model for the first provider found.
+    """
+    from pathlib import Path as _P
+
+    key_dir = _P.home() / ".axion" / "credentials"
+
+    # 1. Anthropic
+    if os.environ.get("ANTHROPIC_API_KEY") or (key_dir / "anthropic.key").exists():
+        return "claude-sonnet-4-6"
+
+    # 2. OpenAI
+    if os.environ.get("OPENAI_API_KEY") or (key_dir / "openai.key").exists():
+        return "gpt-4o"
+
+    # 3. xAI
+    if os.environ.get("XAI_API_KEY") or (key_dir / "xai.key").exists():
+        return "grok-2"
+
+    # 4. Ollama (check if running)
+    try:
+        import httpx
+        resp = httpx.get("http://localhost:11434/api/tags", timeout=2.0)
+        if resp.status_code == 200:
+            return "llama3.1"
+    except Exception:
+        pass
+
+    # Default to Anthropic (will show friendly error if no key)
+    return DEFAULT_MODEL
+
 console = Console(theme=CLAW_THEME)
 renderer = TerminalRenderer(console=console)
 
@@ -438,10 +473,14 @@ def _build_runtime(
     """Build a ConversationRuntime with all components wired up."""
     cfg = config or _load_config()
 
-    # Resolve model: CLI flag -> config -> env -> default
+    # Resolve model: CLI flag -> config -> env -> auto-detect from saved keys
     effective_model = resolve_model_alias(model)
-    if effective_model == resolve_model_alias(DEFAULT_MODEL) and cfg.feature_config.model:
-        effective_model = resolve_model_alias(cfg.feature_config.model)
+    if effective_model == resolve_model_alias(DEFAULT_MODEL):
+        # User didn't specify a model — check config, then auto-detect
+        if cfg.feature_config.model:
+            effective_model = resolve_model_alias(cfg.feature_config.model)
+        else:
+            effective_model = resolve_model_alias(_auto_detect_model())
 
     # Build provider
     provider = ProviderClient.from_model(effective_model)
@@ -1545,7 +1584,10 @@ async def run_repl(
                     console.print("[dim]Try /compact to reduce history or /clear to start fresh.[/dim]")
                 elif "api key" in error_msg.lower() or "credentials" in error_msg.lower():
                     console.print(f"[red]Authentication error: {error_msg}[/red]")
-                    console.print("[dim]Check your ANTHROPIC_API_KEY or run /login[/dim]")
+                    console.print("[dim]Check your API key or run axion login[/dim]")
+                elif "rate limit" in error_msg.lower() or "429" in error_msg:
+                    console.print(f"[yellow]Rate limited: {error_msg}[/yellow]")
+                    console.print("[dim]Wait a moment and try again, or switch to a different model with /model[/dim]")
                 elif any(
                     kw in error_msg.lower()
                     for kw in ("timeout", "connect", "readerror", "read error", "network", "httpx")
