@@ -1,0 +1,192 @@
+{
+  "name": "axion-code",
+  "displayName": "Axion Code",
+  "description": "AI coding assistant — use Claude, GPT, Grok, or local models right inside VS Code",
+  "version": "0.1.0",
+  "publisher": "cypher125",
+  "author": {
+    "name": "Cyrus",
+    "email": "osawayecyrus@gmail.com"
+  },
+  "icon": "resources/icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/cypher125/Axion-Code"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "AI",
+    "Programming Languages",
+    "Other"
+  ],
+  "keywords": [
+    "ai",
+    "claude",
+    "gpt",
+    "coding-assistant",
+    "ollama",
+    "axion"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "axion-sidebar",
+          "title": "Axion Code",
+          "icon": "resources/axion-icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "axion-sidebar": [
+        {
+          "type": "webview",
+          "id": "axion.chatView",
+          "name": "Chat"
+        },
+        {
+          "id": "axion.sessionsView",
+          "name": "Sessions"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "axion.openChat",
+        "title": "Axion: Open Chat",
+        "icon": "$(comment-discussion)"
+      },
+      {
+        "command": "axion.askAboutSelection",
+        "title": "Axion: Ask About Selection"
+      },
+      {
+        "command": "axion.reviewFile",
+        "title": "Axion: Review This File"
+      },
+      {
+        "command": "axion.generateTests",
+        "title": "Axion: Generate Tests"
+      },
+      {
+        "command": "axion.explainCode",
+        "title": "Axion: Explain This Code"
+      },
+      {
+        "command": "axion.fixBug",
+        "title": "Axion: Fix Bug in Selection"
+      },
+      {
+        "command": "axion.setModel",
+        "title": "Axion: Switch Model"
+      },
+      {
+        "command": "axion.activateLicense",
+        "title": "Axion: Activate License"
+      },
+      {
+        "command": "axion.newSession",
+        "title": "Axion: New Session"
+      }
+    ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "axion.askAboutSelection",
+          "when": "editorHasSelection",
+          "group": "axion@1"
+        },
+        {
+          "command": "axion.explainCode",
+          "when": "editorHasSelection",
+          "group": "axion@2"
+        },
+        {
+          "command": "axion.fixBug",
+          "when": "editorHasSelection",
+          "group": "axion@3"
+        },
+        {
+          "command": "axion.reviewFile",
+          "group": "axion@4"
+        },
+        {
+          "command": "axion.generateTests",
+          "group": "axion@5"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "axion.openChat",
+        "key": "ctrl+shift+a",
+        "mac": "cmd+shift+a"
+      },
+      {
+        "command": "axion.askAboutSelection",
+        "key": "ctrl+shift+e",
+        "mac": "cmd+shift+e",
+        "when": "editorHasSelection"
+      }
+    ],
+    "configuration": {
+      "title": "Axion Code",
+      "properties": {
+        "axion.model": {
+          "type": "string",
+          "default": "sonnet",
+          "description": "Default AI model (opus, sonnet, haiku, gpt-4o, grok-2, llama3.1)",
+          "enum": [
+            "opus",
+            "sonnet",
+            "haiku",
+            "gpt-4o",
+            "grok-2",
+            "llama3.1",
+            "mistral"
+          ]
+        },
+        "axion.permissionMode": {
+          "type": "string",
+          "default": "prompt",
+          "description": "Permission mode for tool execution",
+          "enum": [
+            "allow",
+            "prompt",
+            "read-only"
+          ]
+        },
+        "axion.cliPath": {
+          "type": "string",
+          "default": "axion",
+          "description": "Path to the axion CLI executable"
+        },
+        "axion.budget": {
+          "type": "number",
+          "default": 0,
+          "description": "Max cost budget per session in USD (0 = unlimited)"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "lint": "eslint src --ext ts",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.3.0",
+    "@vscode/vsce": "^2.22.0",
+    "eslint": "^8.56.0"
+  }
+}
