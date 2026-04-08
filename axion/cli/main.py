@@ -693,6 +693,11 @@ async def _handle_slash_command(
     if cmd == "session":
         return _handle_session_command(args, session)
 
+    # --- License ---
+    if cmd == "license":
+        from axion.runtime.license import format_license_status, load_license
+        return format_license_status(load_license())
+
     # --- Plan mode ---
     if cmd == "plan":
         return _handle_plan_command(args, runtime, session)
