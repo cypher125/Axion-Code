@@ -109,7 +109,7 @@ axion models
 
 All tools are automatically sent to the model with every request, so the AI can read files, write code, run commands, and search the web without any manual setup.
 
-### Slash Commands (60+)
+### Slash Commands (46)
 
 ```
 /help          Show all commands
@@ -329,7 +329,7 @@ axion/
     sse            Server-Sent Events parser
     error          Error hierarchy with retry classification
   cli/           Terminal interface
-    main           REPL loop, 60+ slash commands, session management
+    main           REPL loop, 46 slash commands, session management
     render         Streaming markdown, box-drawing tool display, spinner
     input          Tab completion, key bindings, multiline input
   runtime/       Core engine (22 modules)
@@ -352,7 +352,7 @@ axion/
     policy_engine  Condition combinators (And/Or/GreenAt), chained actions
     recovery       Failure recipes with async retry and escalation
   tools/         13 built-in tools + deferred schema loading (ToolSearch)
-  commands/      60+ slash commands with argument parsing and fuzzy suggestions
+  commands/      46 slash commands with argument parsing and fuzzy suggestions
   plugins/       Plugin manifest validation, lifecycle execution, persistence
   telemetry/     Session tracing, JSONL/memory sinks, analytics events
   compat_harness/ Upstream manifest extraction
@@ -536,12 +536,12 @@ GitHub Actions runs on every push and PR:
 | Metric | Value |
 |---|---|
 | Python files | 102 |
-| Lines of code | 18,184 |
+| Lines of code | 20,229 |
 | Unit tests | 166 |
 | Integration tests | 7 (mock server) |
 | Providers | 4 (Anthropic, OpenAI, xAI, Ollama) |
 | Built-in tools | 13 |
-| Slash commands | 60+ |
+| Slash commands | 46 |
 | CI matrix | 9 jobs (3 OS x 3 Python) |
 | Min Python | 3.11 |
 
