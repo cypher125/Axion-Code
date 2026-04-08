@@ -1233,6 +1233,10 @@ async def run_repl(
     if resume:
         runtime.usage_tracker = UsageTracker.from_session(session)
 
+    # License check
+    from axion.runtime.license import check_license_or_warn
+    license_info = check_license_or_warn(console if output_format != "json" else None)
+
     # Welcome screen with TUI
     if output_format != "json":
         perm_display = runtime.permission_policy.mode.value
@@ -1303,6 +1307,16 @@ async def run_repl(
                 except Exception:
                     pass
                 continue
+
+            # License: enforce turn limit for free tier
+            if not license_info.is_active:
+                turn_count = runtime.usage_tracker.turn_count
+                if turn_count >= license_info.max_turns:
+                    console.print(
+                        f"\n[yellow]Free tier limit reached ({license_info.max_turns} turns).[/yellow]"
+                        f"\n[dim]Run [bold]axion activate <key>[/bold] to unlock unlimited turns.[/dim]\n"
+                    )
+                    continue
 
             # Send to model
             text_buffer.clear()
@@ -1804,6 +1818,38 @@ def logout(provider: str) -> None:
     """Log out and clear stored credentials."""
     exit_code = _run_logout(provider)
     sys.exit(exit_code)
+
+
+@cli.command()
+@click.argument("license_key")
+def activate(license_key: str) -> None:
+    """Activate Axion with a license key."""
+    from axion.runtime.license import save_license, validate_license_key
+
+    info = validate_license_key(license_key)
+    if info.valid:
+        save_license(license_key)
+        console.print("\n[bold green]License activated![/bold green]")
+        console.print(f"  Tier: [bold]{info.tier}[/bold]")
+        if info.email:
+            console.print(f"  Email: {info.email}")
+        if info.expires_at:
+            from datetime import datetime
+            exp = datetime.fromtimestamp(info.expires_at).strftime("%Y-%m-%d")
+            console.print(f"  Expires: {exp}")
+        console.print("\n  All limits removed. Enjoy Axion!")
+    else:
+        console.print("\n[red]Invalid license key.[/red]")
+        console.print("  Check your key and try again.")
+        sys.exit(1)
+
+
+@cli.command()
+def deactivate() -> None:
+    """Remove stored license key."""
+    from axion.runtime.license import clear_license
+    clear_license()
+    console.print("[dim]License removed. Reverted to free tier.[/dim]")
 
 
 @cli.command()
