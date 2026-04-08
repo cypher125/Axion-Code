@@ -26,18 +26,18 @@ from prompt_toolkit.styles import Style
 # Slash command completer
 # ---------------------------------------------------------------------------
 
-SLASH_COMMANDS = [
-    "/help", "/quit", "/exit", "/q", "/clear", "/cost", "/status",
-    "/model", "/permissions", "/compact", "/config", "/mcp", "/plugins",
-    "/skills", "/agents", "/memory", "/init", "/doctor", "/resume",
-    "/version", "/sandbox", "/diff", "/export", "/session", "/login",
-    "/logout", "/plan",
-]
+def _get_slash_commands() -> list[str]:
+    """Get all slash commands from the registry (always up to date)."""
+    from axion.commands.registry import get_command_registry
+    reg = get_command_registry()
+    return [f"/{name}" for name in reg.command_names()]
 
 MODEL_COMPLETIONS = [
     "opus", "sonnet", "haiku",
     "claude-opus-4-6", "claude-sonnet-4-6", "claude-haiku-4-5",
-    "gpt-4o", "o1", "o3", "grok-2", "llama3.1", "mistral",
+    "gpt-4o", "gpt-4o-mini", "o1", "o3", "o3-mini",
+    "grok-2",
+    "llama3.1", "mistral", "codellama", "deepseek", "phi3", "gemma2", "qwen",
 ]
 
 
@@ -55,7 +55,7 @@ class SlashCommandCompleter(Completer):
         if len(parts) == 1 and not text.endswith(" "):
             return [
                 Completion(c, start_position=-len(cmd))
-                for c in SLASH_COMMANDS if c.startswith(cmd)
+                for c in _get_slash_commands() if c.startswith(cmd)
             ]
 
         arg_text = parts[1] if len(parts) > 1 else ""
@@ -70,6 +70,18 @@ class SlashCommandCompleter(Completer):
             candidates = ["list", "install", "enable", "disable"]
         elif cmd == "/resume":
             candidates = ["latest"]
+        elif cmd == "/mcp":
+            candidates = ["list", "show", "help"]
+        elif cmd == "/permissions":
+            candidates = ["allow", "prompt", "read-only", "workspace-write"]
+        elif cmd == "/share":
+            candidates = ["file", "json", "import"]
+        elif cmd == "/undo":
+            candidates = ["hard"]
+        elif cmd == "/init-project" or cmd == "/scaffold":
+            candidates = ["react", "nextjs", "django", "fastapi", "express", "cli", "flask"]
+        elif cmd == "/export":
+            candidates = ["transcript.md"]
 
         return [
             Completion(c, start_position=-len(arg_text))
