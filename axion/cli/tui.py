@@ -20,12 +20,18 @@ from rich.table import Table
 # Axion ASCII Logo
 # ---------------------------------------------------------------------------
 
-AXION_LOGO_SMALL = """[bold cyan]
-  ╔═╗╦ ╦╦╔═╗╔╗╔
-  ╠═╣╔╩╦╝║║ ║║║║
-  ╩ ╩╩ ╚═╩╚═╝╝╚╝[/bold cyan]"""
+# Network node graph logo — represents AI connections
+AXION_LOGO_SMALL = (
+    "[#00d4aa]        ●───────●[/#00d4aa]\n"
+    "[#00d4aa]       ╱ ╲     ╱ [/#00d4aa]\n"
+    "[#00d4aa]      ●   ╲   ╱  [/#00d4aa]\n"
+    "[#00d4aa]       ╲   [bold #64ffda]◆[/bold #64ffda]──●   [/#00d4aa]\n"
+    "[#00d4aa]        ╲ ╱ ╲     [/#00d4aa]\n"
+    "[#00d4aa]         ●   ●    [/#00d4aa]\n"
+    "[bold #64ffda]      A X I O N[/bold #64ffda]"
+)
 
-AXION_LOGO_MINI = "[bold cyan]◆ AXION[/bold cyan]"
+AXION_LOGO_MINI = "[bold #00d4aa]◆ AXION[/bold #00d4aa]"
 
 
 # ---------------------------------------------------------------------------
@@ -119,8 +125,14 @@ def render_welcome_screen(
 
     console.print()
 
-    # Simple ASCII mascot (works on all terminals)
-    mascot = "[bold cyan]   [  **  ]\n   [ AXION ]\n   [______][/bold cyan]"
+    # Network graph mascot matching the logo
+    mascot = (
+        "[#00d4aa]      ●───●[/#00d4aa]\n"
+        "[#00d4aa]     ╱ ╲ ╱ [/#00d4aa]\n"
+        "[#00d4aa]    ●  [bold #64ffda]◆[/bold #64ffda]──●[/#00d4aa]\n"
+        "[#00d4aa]     ╲ ╱ ╲ [/#00d4aa]\n"
+        "[#00d4aa]      ●───●[/#00d4aa]"
+    )
 
     # Left column: version + mascot
     left_lines = [
