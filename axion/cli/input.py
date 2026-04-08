@@ -1,6 +1,7 @@
-"""Interactive input handling with prompt_toolkit: completion, multiline, keybindings.
+"""Interactive input handling with styled textarea-like input box.
 
-Maps to: rust/crates/rusty-claude-cli/src/input.rs
+The input area looks like a bordered text box with a thick blinking cursor,
+similar to Claude Code's terminal UI.
 """
 
 from __future__ import annotations
@@ -10,6 +11,7 @@ from typing import Any
 
 from prompt_toolkit import PromptSession
 from prompt_toolkit.completion import Completer, Completion
+from prompt_toolkit.cursor_shapes import CursorShape
 from prompt_toolkit.document import Document
 from prompt_toolkit.formatted_text import HTML
 from prompt_toolkit.history import FileHistory
@@ -26,18 +28,14 @@ SLASH_COMMANDS = [
     "/model", "/permissions", "/compact", "/config", "/mcp", "/plugins",
     "/skills", "/agents", "/memory", "/init", "/doctor", "/resume",
     "/version", "/sandbox", "/diff", "/export", "/session", "/login",
-    "/logout", "/vim", "/fast", "/theme", "/voice", "/branch",
-    "/rewind", "/hooks", "/context", "/output-style", "/effort",
-    "/plan", "/review", "/tasks", "/commit", "/bughunter",
-    "/share", "/feedback", "/upgrade", "/stats", "/files",
-    "/summary", "/desktop", "/brief", "/verbose",
+    "/logout", "/plan",
 ]
 
 MODEL_COMPLETIONS = [
     "opus", "sonnet", "haiku",
-    "claude-opus-4-6", "claude-sonnet-4-6", "claude-haiku-4-5-20251213",
+    "claude-opus-4-6", "claude-sonnet-4-6", "claude-haiku-4-5",
     "gpt-4o", "gpt-4-turbo", "o1", "o3",
-    "grok-2",
+    "grok-2", "llama3.1", "mistral",
 ]
 
 PERMISSION_COMPLETIONS = [
@@ -46,16 +44,7 @@ PERMISSION_COMPLETIONS = [
 
 
 class SlashCommandCompleter(Completer):
-    """Context-aware completer for slash commands and their arguments.
-
-    Provides completions for:
-    - Command names (with fuzzy matching)
-    - /model arguments (model names)
-    - /permissions arguments (permission modes)
-    - /mcp arguments (list, show, help)
-    - /plugins arguments (list, install, enable, disable, uninstall)
-    - /session arguments (list, show, fork, switch, delete)
-    """
+    """Context-aware completer for slash commands and their arguments."""
 
     def get_completions(self, document: Document, complete_event: Any) -> list[Completion]:
         text = document.text_before_cursor.lstrip()
@@ -66,11 +55,9 @@ class SlashCommandCompleter(Completer):
         parts = text.split(maxsplit=1)
         cmd = parts[0].lower()
 
-        # If still typing the command name
         if len(parts) == 1 and not text.endswith(" "):
             return self._complete_command_name(cmd)
 
-        # Completing arguments for known commands
         arg_text = parts[1] if len(parts) > 1 else ""
         return self._complete_arguments(cmd, arg_text)
 
@@ -93,13 +80,9 @@ class SlashCommandCompleter(Completer):
         elif cmd == "/plugins":
             candidates = ["list", "install", "enable", "disable", "uninstall"]
         elif cmd == "/session":
-            candidates = ["list", "show", "fork", "switch", "delete"]
-        elif cmd == "/theme":
-            candidates = ["dark", "light", "default"]
-        elif cmd == "/effort":
-            candidates = ["low", "medium", "high"]
-        elif cmd in ("/output-style", "/brief", "/verbose"):
-            candidates = ["brief", "verbose", "default"]
+            candidates = ["list", "show", "fork", "switch", "delete", "new"]
+        elif cmd == "/plan":
+            candidates = ["execute", "exit", "status"]
         elif cmd == "/resume":
             candidates = ["latest"]
         else:
@@ -122,35 +105,49 @@ def create_key_bindings() -> KeyBindings:
 
     @bindings.add(Keys.ControlD)
     def exit_handler(event: Any) -> None:
-        """Exit on Ctrl+D."""
         event.app.exit(exception=EOFError())
 
     @bindings.add(Keys.Escape, Keys.Enter)
     def newline_handler(event: Any) -> None:
-        """Insert newline on Alt+Enter (for multiline input)."""
         event.current_buffer.insert_text("\n")
 
     return bindings
 
 
 # ---------------------------------------------------------------------------
-# REPL style
+# Styled input — textarea-like box with thick cursor
 # ---------------------------------------------------------------------------
 
-REPL_STYLE = Style.from_dict({
+AXION_INPUT_STYLE = Style.from_dict({
+    # Prompt text
     "prompt": "bold cyan",
-    "": "",  # default text
+    "prompt.label": "bold cyan",
+
+    # Input text area — looks like a bordered box
+    "": "fg:white",
+
+    # Bottom toolbar
+    "bottom-toolbar": "bg:#333333 fg:#888888",
+    "bottom-toolbar.text": "fg:#888888",
+
+    # Cursor — block style (thick)
+    "cursor-column": "bg:cyan",
 })
 
 
 # ---------------------------------------------------------------------------
-# Input session
+# Input session with textarea styling
 # ---------------------------------------------------------------------------
 
 class InputSession:
-    """Manages the REPL input session with history, completion, and key bindings.
+    """Manages the REPL input with a textarea-like bordered appearance.
 
-    Maps to: rust/crates/rusty-claude-cli/src/input.rs::SlashCommandHelper
+    Features:
+    - Bordered input area that looks like a text editor
+    - Block (thick) cursor instead of thin line
+    - Tab completion for slash commands
+    - History with arrow keys
+    - Ctrl+D to exit, Alt+Enter for newline
     """
 
     def __init__(
@@ -160,41 +157,44 @@ class InputSession:
     ) -> None:
         history = FileHistory(str(history_path)) if history_path else None
         self._bindings = create_key_bindings()
-        self._multiline = multiline
 
         self.session: PromptSession[str] = PromptSession(
             history=history,
             completer=SlashCommandCompleter(),
             complete_while_typing=True,
             key_bindings=self._bindings,
-            style=REPL_STYLE,
+            style=AXION_INPUT_STYLE,
             multiline=multiline,
+            cursor=CursorShape.BLOCK,
+            prompt_continuation="  ... ",
         )
 
-    async def prompt(self, prompt_text: str = "axion> ") -> str | None:
-        """Get input from the user. Returns None on EOF/interrupt."""
+    async def prompt(self, prompt_text: str = "> ") -> str | None:
+        """Get input from the user with textarea styling.
+
+        Returns None on EOF/interrupt.
+        """
         try:
+            # Build the prompt with a box-like appearance
+            prompt_html = HTML(
+                f'<prompt>╭─ <prompt.label>{prompt_text.strip()}</prompt.label> '
+                f'─────────────────────────────────────────╮\n'
+                f'│ </prompt>'
+            )
             result = await self.session.prompt_async(
-                HTML(f"<prompt>{prompt_text}</prompt>"),
+                prompt_html,
+                rprompt=HTML('<prompt>│</prompt>'),
             )
             return result
         except (EOFError, KeyboardInterrupt):
             return None
 
     def push_history(self, text: str) -> None:
-        """Manually add an entry to history."""
         if self.session.history:
             self.session.history.append_string(text)
 
-    def set_multiline(self, enabled: bool) -> None:
-        """Toggle multiline input mode."""
-        self._multiline = enabled
-        # Note: prompt_toolkit doesn't support changing multiline on existing session
-        # This would require recreating the session
-
     @staticmethod
     def default_history_path() -> Path:
-        """Get the default history file path."""
         history_dir = Path.home() / ".axion"
         history_dir.mkdir(parents=True, exist_ok=True)
         return history_dir / "repl_history"

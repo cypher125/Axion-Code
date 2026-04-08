@@ -1150,8 +1150,7 @@ async def run_repl(
     budget: float | None = None,
 ) -> int:
     """Run the interactive REPL loop."""
-    from prompt_toolkit import PromptSession
-    from prompt_toolkit.history import FileHistory
+    from axion.cli.input import InputSession
 
     config = _load_config()
     plugin_manager = _create_plugin_manager()
@@ -1247,22 +1246,20 @@ async def run_repl(
             message_count=session.message_count(),
         )
 
-    # REPL history
-    history_dir = Path.home() / ".axion"
-    history_dir.mkdir(parents=True, exist_ok=True)
-    history_path = history_dir / "repl_history"
-    prompt_session: PromptSession[str] = PromptSession(
-        history=FileHistory(str(history_path))
-    )
+    # Input session with textarea styling
+    input_session = InputSession(history_path=InputSession.default_history_path())
 
     _turn_interrupted = False
 
     try:
         while True:
-            # Read input
+            # Read input with textarea-styled box
             try:
-                prompt_text = "axion[plan]> " if runtime.plan_mode_active else "axion> "
-                user_input = await prompt_session.prompt_async(prompt_text)
+                prompt_label = "axion[plan]" if runtime.plan_mode_active else "axion"
+                user_input = await input_session.prompt(prompt_label)
+                if user_input is None:
+                    console.print("\n[dim]Goodbye![/dim]")
+                    break
             except (EOFError, KeyboardInterrupt):
                 console.print("\n[dim]Goodbye![/dim]")
                 break
