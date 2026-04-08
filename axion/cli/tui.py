@@ -215,35 +215,66 @@ def render_tool_panel(
     lines: list[str] = []
 
     if tool_name == "Edit" and "file_path" in params:
-        # Show edit as a diff with green/red lines
+        # Show edit as a diff — background colored, real line numbers from file
         file_path = params.get("file_path", "")
         old_str = params.get("old_string", "")
         new_str = params.get("new_string", "")
+        old_lines_list = old_str.splitlines() if old_str else []
+        new_lines_list = new_str.splitlines() if new_str else []
+
         lines.append(f"  [dim]file:[/dim] {file_path}")
-        if old_str or new_str:
-            lines.append("")
-            # Show removed lines in red
-            for line in old_str.splitlines()[:8]:
-                lines.append(f"  [red]- {line}[/red]")
-            # Show added lines in green
-            for line in new_str.splitlines()[:8]:
-                lines.append(f"  [green]+ {line}[/green]")
-            if len(old_str.splitlines()) > 8 or len(new_str.splitlines()) > 8:
-                lines.append(f"  [dim]... ({len(old_str.splitlines())} removed, {len(new_str.splitlines())} added)[/dim]")
+        count_info = f"{len(new_lines_list)} addition{'s' if len(new_lines_list) != 1 else ''} and {len(old_lines_list)} removal{'s' if len(old_lines_list) != 1 else ''}"
+        lines.append(f"  [dim]{count_info}[/dim]")
+        lines.append("")
+
+        # Try to find real line number where old_string starts in the file
+        start_line = 1
+        try:
+            from pathlib import Path as _Path
+            fp = _Path(file_path)
+            if fp.exists() and old_str:
+                file_content = fp.read_text(encoding="utf-8", errors="replace")
+                pos = file_content.find(old_str)
+                if pos >= 0:
+                    start_line = file_content[:pos].count("\n") + 1
+                # If old_str not found (already replaced), try new_str
+                elif new_str:
+                    pos = file_content.find(new_str)
+                    if pos >= 0:
+                        start_line = file_content[:pos].count("\n") + 1
+        except Exception:
+            pass
+
+        line_num = start_line
+        # Show removed lines with RED background
+        for old_line in old_lines_list[:10]:
+            lines.append(f"  [dim]{line_num:>4}[/dim] [on red] {old_line} [/on red]")
+            line_num += 1
+        # Show added lines with GREEN background
+        line_num = start_line  # Reset — new lines replace at same position
+        for new_line in new_lines_list[:10]:
+            lines.append(f"  [dim]{line_num:>4}[/dim] [on green] {new_line} [/on green]")
+            line_num += 1
+
+        total = len(old_lines_list) + len(new_lines_list)
+        if total > 10:
+            lines.append(f"  [dim]     ... ({total} lines total)[/dim]")
 
     elif tool_name == "Write" and "file_path" in params:
-        # Show write with green lines (all new content)
+        # Show write with GREEN background lines + line numbers
         file_path = params.get("file_path", "")
         content = params.get("content", "")
-        line_count = content.count("\n") + 1 if content else 0
+        content_lines = content.splitlines() if content else []
+        line_count = len(content_lines)
+
         lines.append(f"  [dim]file:[/dim] {file_path}")
-        lines.append(f"  [dim]lines:[/dim] {line_count}")
-        if content:
-            lines.append("")
-            for line in content.splitlines()[:6]:
-                lines.append(f"  [green]+ {line}[/green]")
-            if line_count > 6:
-                lines.append(f"  [dim]... ({line_count} lines total)[/dim]")
+        lines.append(f"  [dim]{line_count} line{'s' if line_count != 1 else ''}[/dim]")
+        lines.append("")
+
+        for i, cl in enumerate(content_lines[:8], 1):
+            lines.append(f"  [dim]{i:>4}[/dim] [on green] {cl} [/on green]")
+        if line_count > 8:
+            lines.append(f"  [dim]     ... ({line_count} lines total)[/dim]")
 
     elif tool_name == "Bash":
         cmd = params.get("command", "")
@@ -300,18 +331,17 @@ def render_tool_result_panel(
         # Show edit/write result in dim (it's just a confirmation)
         display = f"[dim]{display}[/dim]"
     elif tool_name == "Read" and not is_error:
-        # Fade line numbers in read output
+        # Show with dim line numbers, normal content text
         styled_lines = []
         for line in display.splitlines()[:40]:
-            # Line numbers are before the tab
             if "\t" in line:
                 num, rest = line.split("\t", 1)
-                styled_lines.append(f"[dim]{num}[/dim]  {rest}")
+                styled_lines.append(f"  [dim]{num:>4}[/dim]  {rest}")
             else:
-                styled_lines.append(f"[dim]{line}[/dim]")
+                styled_lines.append(f"        {line}")
         display = "\n".join(styled_lines)
         if len(output.splitlines()) > 40:
-            display += f"\n[dim]... ({len(output.splitlines())} lines total)[/dim]"
+            display += f"\n  [dim]     ... ({len(output.splitlines())} lines total)[/dim]"
     elif tool_name == "Bash" and not is_error:
         # Highlight stderr in red within bash output
         styled_lines = []
