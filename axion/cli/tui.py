@@ -20,15 +20,17 @@ from rich.table import Table
 # Axion ASCII Logo
 # ---------------------------------------------------------------------------
 
-# Network node graph logo — represents AI connections
+# Neural network / node graph logo
 AXION_LOGO_SMALL = (
-    "[#00d4aa]        ●───────●[/#00d4aa]\n"
-    "[#00d4aa]       ╱ ╲     ╱ [/#00d4aa]\n"
-    "[#00d4aa]      ●   ╲   ╱  [/#00d4aa]\n"
-    "[#00d4aa]       ╲   [bold #64ffda]◆[/bold #64ffda]──●   [/#00d4aa]\n"
-    "[#00d4aa]        ╲ ╱ ╲     [/#00d4aa]\n"
-    "[#00d4aa]         ●   ●    [/#00d4aa]\n"
-    "[bold #64ffda]      A X I O N[/bold #64ffda]"
+    "[#8892b0]           ●[/#8892b0][#00d4aa]─────[/#00d4aa][#8892b0]●[/#8892b0]\n"
+    "[#00d4aa]          ╱ ╲   ╱[/#00d4aa]\n"
+    "[#8892b0]         ●[/#8892b0][#00d4aa]───[bold #64ffda]◆[/bold #64ffda]──[/#00d4aa][#8892b0]●[/#8892b0]\n"
+    "[#00d4aa]        ╱ ╱ ╲ ╲[/#00d4aa]\n"
+    "[#8892b0]       ●[/#8892b0][#00d4aa]─╱───╲─[/#00d4aa][#8892b0]●[/#8892b0]\n"
+    "[#00d4aa]        ╲     ╱[/#00d4aa]\n"
+    "[#8892b0]         ●[/#8892b0][#00d4aa]───[/#00d4aa][#8892b0]●[/#8892b0]\n"
+    "\n"
+    "[bold #64ffda]       A X I O N[/bold #64ffda]"
 )
 
 AXION_LOGO_MINI = "[bold #00d4aa]◆ AXION[/bold #00d4aa]"
@@ -125,13 +127,13 @@ def render_welcome_screen(
 
     console.print()
 
-    # Network graph mascot matching the logo
+    # Network node graph matching the logo
     mascot = (
-        "[#00d4aa]      ●───●[/#00d4aa]\n"
-        "[#00d4aa]     ╱ ╲ ╱ [/#00d4aa]\n"
-        "[#00d4aa]    ●  [bold #64ffda]◆[/bold #64ffda]──●[/#00d4aa]\n"
-        "[#00d4aa]     ╲ ╱ ╲ [/#00d4aa]\n"
-        "[#00d4aa]      ●───●[/#00d4aa]"
+        "[#8892b0]     ●[/#8892b0][#00d4aa]───[/#00d4aa][#8892b0]●[/#8892b0]\n"
+        "[#00d4aa]    ╱ ╲ ╱[/#00d4aa]\n"
+        "[#8892b0]   ●[/#8892b0][#00d4aa]─[bold #64ffda]◆[/bold #64ffda]─[/#00d4aa][#8892b0]●[/#8892b0]\n"
+        "[#00d4aa]    ╲ ╱ ╲[/#00d4aa]\n"
+        "[#8892b0]     ●[/#8892b0][#00d4aa]───[/#00d4aa][#8892b0]●[/#8892b0]"
     )
 
     # Left column: version + mascot
