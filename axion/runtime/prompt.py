@@ -171,12 +171,13 @@ def read_git_status(cwd: Path) -> str | None:
         result = subprocess.run(
             ["git", "--no-optional-locks", "status", "--short", "--branch"],
             capture_output=True, text=True, cwd=str(cwd), timeout=5,
+            encoding="utf-8", errors="replace",
         )
         if result.returncode != 0:
             return None
         trimmed = result.stdout.strip()
         return trimmed if trimmed else None
-    except (subprocess.SubprocessError, FileNotFoundError):
+    except (subprocess.SubprocessError, FileNotFoundError, OSError):
         return None
 
 
@@ -200,6 +201,7 @@ def _read_git_output(cwd: Path, args: list[str]) -> str | None:
         result = subprocess.run(
             ["git"] + args,
             capture_output=True, text=True, cwd=str(cwd), timeout=5,
+            encoding="utf-8", errors="replace",
         )
         if result.returncode != 0:
             return None

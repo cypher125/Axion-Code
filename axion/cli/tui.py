@@ -119,12 +119,8 @@ def render_welcome_screen(
 
     console.print()
 
-    # Mascot
-    mascot = random.choice([
-        "[bold cyan]    ◆ ◆\n   ╱███╲\n  ╱█████╲\n   ╲███╱\n    ▀▀▀[/bold cyan]",
-        "[bold cyan]   ╭───╮\n   │ ◆ │\n   ╰─┬─╯\n     │\n   ╭─┴─╮[/bold cyan]",
-        "[bold cyan]   ┌─┐\n   │▪│\n   └┬┘\n  ╔═╩═╗\n  ╚═══╝[/bold cyan]",
-    ])
+    # Simple ASCII mascot (works on all terminals)
+    mascot = "[bold cyan]   [  **  ]\n   [ AXION ]\n   [______][/bold cyan]"
 
     # Left column: version + mascot
     left_lines = [

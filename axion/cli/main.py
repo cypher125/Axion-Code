@@ -161,10 +161,11 @@ def _git_branch() -> str | None:
         result = subprocess.run(
             ["git", "rev-parse", "--abbrev-ref", "HEAD"],
             capture_output=True, text=True, timeout=5,
+            encoding="utf-8", errors="replace",
         )
         if result.returncode == 0:
             return result.stdout.strip()
-    except (subprocess.SubprocessError, FileNotFoundError):
+    except (subprocess.SubprocessError, FileNotFoundError, OSError):
         pass
     return None
 
@@ -175,10 +176,11 @@ def _git_status_short() -> str | None:
         result = subprocess.run(
             ["git", "status", "--short"],
             capture_output=True, text=True, timeout=5,
+            encoding="utf-8", errors="replace",
         )
         if result.returncode == 0:
             return result.stdout.strip() or "(clean)"
-    except (subprocess.SubprocessError, FileNotFoundError):
+    except (subprocess.SubprocessError, FileNotFoundError, OSError):
         pass
     return None
 
