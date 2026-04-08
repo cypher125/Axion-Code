@@ -31,6 +31,7 @@ from typing import Any
 import click
 from rich.console import Console
 from rich.markdown import Markdown
+from rich.panel import Panel
 
 from axion import __version__
 from axion.api.client import (
@@ -1180,11 +1181,7 @@ async def run_repl(
 
     def on_text_delta(text: str) -> None:
         text_buffer.append(text)
-        if output_format == "json":
-            return
-        rendered = repl_md_stream.push(renderer, text)
-        if rendered:
-            console.print(Markdown(rendered), end="")
+        # Don't render streaming text — collect it and render as panel at end
 
     def on_tool_use_cb(tool_name: str, tool_input: str) -> None:
         """Show tool invocation in real-time as it happens."""
@@ -1350,18 +1347,19 @@ async def run_repl(
                 summary = await runtime.run_turn(user_input)
                 _stop_spinner()
 
-                # Flush remaining markdown
-                if output_format != "json":
-                    remaining = repl_md_stream.flush(renderer)
-                    if remaining:
-                        console.print(Markdown(remaining))
-
                 if output_format == "json":
                     json_out = _build_json_output(summary, runtime.model)
                     click.echo(json.dumps(json_out))
                 else:
-                    console.print()  # Newline after streaming
-                    # Tool use/results are now shown in real-time via callbacks
+                    # Render the full response text in a bordered panel
+                    full_text = "".join(text_buffer).strip()
+                    if full_text:
+                        console.print(Panel(
+                            Markdown(full_text),
+                            border_style="dim",
+                            padding=(1, 2),
+                        ))
+                    # Tool use/results already shown in real-time via callbacks
 
                     # Cost line with TUI styling
                     if summary.usage.total_tokens() > 0:
