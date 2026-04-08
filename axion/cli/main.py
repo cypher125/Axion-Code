@@ -47,6 +47,13 @@ from axion.cli.tui import (
     render_welcome_screen,
 )
 from axion.commands.handlers.agents import handle_agents_command
+from axion.commands.handlers.builtin_commands import (
+    handle_commit_command,
+    handle_init_project_command,
+    handle_review_command,
+    handle_test_command,
+    handle_undo_command,
+)
 from axion.commands.handlers.mcp import handle_mcp_command
 from axion.commands.handlers.plugins import handle_plugins_command
 from axion.commands.handlers.skills import handle_skills_command
@@ -123,6 +130,12 @@ def _list_sessions(cwd: Path | None = None, limit: int = MAX_SESSION_LIST) -> li
     d = _session_dir(cwd)
     files = sorted(d.glob("*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True)
     return files[:limit]
+
+
+
+
+
+    # _inject_file_context removed — using _inject_file_context instead
 
 
 def _find_latest_session(cwd: Path | None = None) -> Path | None:
@@ -698,11 +711,103 @@ async def _handle_slash_command(
         from axion.runtime.license import format_license_status, load_license
         return format_license_status(load_license())
 
+    # --- Commit ---
+    if cmd == "commit":
+        return handle_commit_command(args)
+
+    # --- Undo ---
+    if cmd == "undo":
+        return handle_undo_command(args)
+
+    # --- Review ---
+    if cmd == "review":
+        # Return the review prompt — the REPL will send it as a turn to the AI
+        review_prompt = handle_review_command(args)
+        if review_prompt.startswith("REVIEW_MODE:"):
+            session.push_user_text(review_prompt)
+            return ""  # Will be processed as a turn
+        return review_prompt
+
+    # --- Test ---
+    if cmd == "test":
+        test_prompt = handle_test_command(args)
+        if test_prompt.startswith("TEST_MODE:"):
+            session.push_user_text(test_prompt)
+            return ""
+        return test_prompt
+
+    # --- Init project ---
+    if cmd in ("init-project", "scaffold"):
+        init_prompt = handle_init_project_command(args)
+        if init_prompt.startswith("INIT_PROJECT_MODE:"):
+            session.push_user_text(init_prompt)
+            return ""
+        return init_prompt
+
+    # --- Share ---
+    if cmd == "share":
+        from axion.runtime.sharing import handle_share_command
+        return handle_share_command(args, session)
+
     # --- Plan mode ---
     if cmd == "plan":
         return _handle_plan_command(args, runtime, session)
 
     return f"Command /{cmd} recognized but has no handler yet."
+
+
+def _inject_file_context(user_input: str) -> str:
+    """Scan user input for @file references and inject file contents.
+
+    Example: "@src/auth.py fix the bug" becomes:
+    "[Context from @src/auth.py]\n1  def login():\n...\n\nfix the bug"
+    """
+    import re
+
+    # Find all @path references (word boundary after @, path chars until space)
+    pattern = r"(?:^|\s)@([\w./\\-]+)"
+    matches = re.findall(pattern, user_input)
+
+    if not matches:
+        return user_input
+
+    context_parts: list[str] = []
+    clean_input = user_input
+
+    for file_ref in matches:
+        file_path = Path(file_ref)
+        if file_path.exists() and file_path.is_file():
+            try:
+                content = file_path.read_text(encoding="utf-8", errors="replace")
+                # Add line numbers
+                numbered = "\n".join(
+                    f"{i}\t{line}" for i, line in enumerate(content.splitlines()[:100], 1)
+                )
+                if len(content.splitlines()) > 100:
+                    numbered += f"\n... ({len(content.splitlines())} lines total)"
+                context_parts.append(f"[Context from @{file_ref}]\n{numbered}")
+                # Remove the @ref from the user input
+                clean_input = clean_input.replace(f"@{file_ref}", "").strip()
+            except OSError:
+                pass
+        elif file_path.exists() and file_path.is_dir():
+            # List directory contents
+            try:
+                entries = sorted(file_path.iterdir())[:30]
+                listing = "\n".join(
+                    f"  {'📁 ' if e.is_dir() else '📄 '}{e.name}" for e in entries
+                )
+                context_parts.append(f"[Contents of @{file_ref}]\n{listing}")
+                clean_input = clean_input.replace(f"@{file_ref}", "").strip()
+            except OSError:
+                pass
+
+    if not context_parts:
+        return user_input
+
+    # Prepend context to the user message
+    context = "\n\n".join(context_parts)
+    return f"{context}\n\n{clean_input}"
 
 
 def _format_status(runtime: ConversationRuntime, session: Session) -> str:
@@ -1358,7 +1463,13 @@ async def run_repl(
             if runtime.permission_prompter and hasattr(runtime.permission_prompter, '_stop_spinner_fn'):
                 runtime.permission_prompter._stop_spinner_fn = _stop_spinner
 
+            # Expand @file references before sending to the model
+            user_input = _inject_file_context(user_input)
+
             try:
+                # Inject @file contents into the prompt
+                user_input = _inject_file_context(user_input)
+
                 if output_format != "json":
                     console.print()  # Blank line before response
                     spinner.start("Thinking...")

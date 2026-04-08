@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from prompt_toolkit import PromptSession
-from prompt_toolkit.completion import Completer, Completion
+from prompt_toolkit.completion import Completer, Completion, merge_completers
 from prompt_toolkit.cursor_shapes import CursorShape
 from prompt_toolkit.document import Document
 from prompt_toolkit.formatted_text import HTML
@@ -77,6 +77,67 @@ class SlashCommandCompleter(Completer):
         ]
 
 
+class FileTagCompleter(Completer):
+    """Completer for @file references — suggests files/dirs in the current or specified directory."""
+
+    def get_completions(self, document: Document, complete_event: Any) -> list[Completion]:
+        text_before = document.text_before_cursor
+
+        # Find the last @ token that is either at the start or preceded by whitespace
+        at_idx = -1
+        for i in range(len(text_before) - 1, -1, -1):
+            if text_before[i] == "@" and (i == 0 or text_before[i - 1] in (" ", "\t")):
+                at_idx = i
+                break
+
+        if at_idx == -1:
+            return []
+
+        # The partial path typed after @
+        partial = text_before[at_idx + 1:]
+
+        # Determine the directory to list and the prefix to match
+        if "/" in partial or "\\" in partial:
+            # User typed a partial path like @src/ma — split into dir + prefix
+            sep = partial.rfind("/")
+            if sep == -1:
+                sep = partial.rfind("\\")
+            dir_part = partial[: sep + 1]
+            name_prefix = partial[sep + 1:]
+            search_dir = Path(dir_part) if dir_part else Path(".")
+        else:
+            dir_part = ""
+            name_prefix = partial
+            search_dir = Path(".")
+
+        try:
+            entries = sorted(search_dir.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower()))
+        except (OSError, PermissionError):
+            return []
+
+        completions: list[Completion] = []
+        for entry in entries:
+            name = entry.name
+            # Skip hidden files/dirs
+            if name.startswith("."):
+                continue
+            if not name.lower().startswith(name_prefix.lower()):
+                continue
+
+            display_name = name + "/" if entry.is_dir() else name
+            completion_text = dir_part + display_name
+
+            completions.append(
+                Completion(
+                    completion_text,
+                    start_position=-len(partial),
+                    display=display_name,
+                )
+            )
+
+        return completions
+
+
 # ---------------------------------------------------------------------------
 # Key bindings
 # ---------------------------------------------------------------------------
@@ -119,9 +180,13 @@ class InputSession:
         self._status_cost = 0.0
         self._status_turn = 0
 
+        combined_completer = merge_completers(
+            [SlashCommandCompleter(), FileTagCompleter()]
+        )
+
         self.session: PromptSession[str] = PromptSession(
             history=history,
-            completer=SlashCommandCompleter(),
+            completer=combined_completer,
             complete_while_typing=True,
             key_bindings=create_key_bindings(),
             style=INPUT_STYLE,

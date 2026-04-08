@@ -219,8 +219,25 @@ SLASH_COMMAND_SPECS: list[SlashCommandSpec] = [
         argument_hint="[list|add|complete]", category="workflow",
     ),
     SlashCommandSpec(
-        name="commit", summary="Create a git commit",
-        category="workflow", interactive_only=True,
+        name="commit", summary="Auto-commit with AI-generated message",
+        argument_hint="[message]", category="workflow",
+    ),
+    SlashCommandSpec(
+        name="undo", summary="Revert last AI change (git reset)",
+        argument_hint="[hard|file.py]", category="workflow",
+    ),
+    SlashCommandSpec(
+        name="test", summary="Generate tests for a file",
+        argument_hint="<file_or_dir> [pytest|jest]", category="workflow",
+    ),
+    SlashCommandSpec(
+        name="init-project", aliases=["scaffold"],
+        summary="Create a new project from template",
+        argument_hint="[react|django|fastapi|express|cli]", category="workflow",
+    ),
+    SlashCommandSpec(
+        name="share", summary="Share session with teammates",
+        argument_hint="[file|json|import <path>]", category="session",
     ),
     SlashCommandSpec(
         name="bughunter", summary="Search for bugs in scope",
