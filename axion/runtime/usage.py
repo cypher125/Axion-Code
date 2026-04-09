@@ -132,34 +132,60 @@ def pricing_for_model(model: str | None) -> ModelPricing | None:
         )
     if "sonnet" in normalized:
         return ModelPricing.default_sonnet_tier()
-    # OpenAI models
+    # OpenAI models — ordered specific to general
+    # GPT-4.1 series (1M context)
+    if "gpt-4.1-nano" in normalized:
+        return ModelPricing(
+            input_cost_per_million=0.10, output_cost_per_million=0.40,
+            cache_creation_cost_per_million=0.05, cache_read_cost_per_million=0.025,
+        )
+    if "gpt-4.1-mini" in normalized:
+        return ModelPricing(
+            input_cost_per_million=0.40, output_cost_per_million=1.60,
+            cache_creation_cost_per_million=0.20, cache_read_cost_per_million=0.10,
+        )
+    if "gpt-4.1" in normalized:
+        return ModelPricing(
+            input_cost_per_million=2.0, output_cost_per_million=8.0,
+            cache_creation_cost_per_million=1.0, cache_read_cost_per_million=0.50,
+        )
+    # GPT-4o series
     if "gpt-4o-mini" in normalized or "4o-mini" in normalized:
         return ModelPricing(
-            input_cost_per_million=0.15,
-            output_cost_per_million=0.60,
-            cache_creation_cost_per_million=0.075,
-            cache_read_cost_per_million=0.075,
+            input_cost_per_million=0.15, output_cost_per_million=0.60,
+            cache_creation_cost_per_million=0.075, cache_read_cost_per_million=0.075,
         )
     if "gpt-4o" in normalized or "4o" in normalized:
         return ModelPricing(
-            input_cost_per_million=2.50,
-            output_cost_per_million=10.0,
-            cache_creation_cost_per_million=1.25,
-            cache_read_cost_per_million=1.25,
+            input_cost_per_million=2.50, output_cost_per_million=10.0,
+            cache_creation_cost_per_million=1.25, cache_read_cost_per_million=1.25,
         )
-    if normalized in ("o1", "o3"):
+    # o-series reasoning
+    if "o4-mini" in normalized:
         return ModelPricing(
-            input_cost_per_million=15.0,
-            output_cost_per_million=60.0,
-            cache_creation_cost_per_million=7.5,
-            cache_read_cost_per_million=7.5,
+            input_cost_per_million=1.10, output_cost_per_million=4.40,
+            cache_creation_cost_per_million=0.55, cache_read_cost_per_million=0.275,
         )
     if "o3-mini" in normalized:
         return ModelPricing(
-            input_cost_per_million=1.10,
-            output_cost_per_million=4.40,
-            cache_creation_cost_per_million=0.55,
-            cache_read_cost_per_million=0.55,
+            input_cost_per_million=1.10, output_cost_per_million=4.40,
+            cache_creation_cost_per_million=0.55, cache_read_cost_per_million=0.55,
+        )
+    if normalized in ("o1", "o3", "o1-pro"):
+        return ModelPricing(
+            input_cost_per_million=15.0, output_cost_per_million=60.0,
+            cache_creation_cost_per_million=7.5, cache_read_cost_per_million=7.5,
+        )
+    if "o1-mini" in normalized:
+        return ModelPricing(
+            input_cost_per_million=1.10, output_cost_per_million=4.40,
+            cache_creation_cost_per_million=0.55, cache_read_cost_per_million=0.55,
+        )
+    # Codex
+    if "codex" in normalized:
+        return ModelPricing(
+            input_cost_per_million=1.50, output_cost_per_million=6.0,
+            cache_creation_cost_per_million=0.75, cache_read_cost_per_million=0.375,
         )
     # xAI
     if "grok" in normalized:

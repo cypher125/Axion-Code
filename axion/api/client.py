@@ -16,30 +16,46 @@ from axion.api.types import MessageRequest, MessageResponse, StreamEvent
 
 # Model alias resolution
 MODEL_ALIASES: dict[str, str] = {
-    # Anthropic
+    # Anthropic Claude
     "opus": "claude-opus-4-6",
     "sonnet": "claude-sonnet-4-6",
     "haiku": "claude-haiku-4-5",
-    # Claude Code format (e.g. "opus[1m]")
     "opus[1m]": "claude-opus-4-6",
     "sonnet[1m]": "claude-sonnet-4-6",
     "haiku[1m]": "claude-haiku-4-5",
-    # OpenAI
+
+    # OpenAI — GPT series
     "gpt4": "gpt-4o",
     "gpt4o": "gpt-4o",
     "gpt-4": "gpt-4o",
     "4o": "gpt-4o",
-    "o1": "o1",
-    "o3": "o3",
-    "o3-mini": "o3-mini",
     "gpt-4o-mini": "gpt-4o-mini",
     "4o-mini": "gpt-4o-mini",
+    "gpt-4.1": "gpt-4.1",
+    "gpt-4.1-mini": "gpt-4.1-mini",
+    "gpt-4.1-nano": "gpt-4.1-nano",
+
+    # OpenAI — o-series (reasoning)
+    "o1": "o1",
+    "o1-mini": "o1-mini",
+    "o1-pro": "o1-pro",
+    "o3": "o3",
+    "o3-mini": "o3-mini",
+    "o4-mini": "o4-mini",
+
+    # OpenAI — Codex
+    "codex": "codex-mini-latest",
+    "codex-mini": "codex-mini-latest",
+
     # xAI
     "grok": "grok-2",
     "grok2": "grok-2",
+    "grok-3": "grok-3",
+
     # Ollama / local
     "local": "llama3.1",
     "llama": "llama3.1",
+    "llama4": "llama4-scout",
     "mistral": "mistral",
     "codellama": "codellama",
     "deepseek": "deepseek-coder-v2",
@@ -86,7 +102,7 @@ def detect_provider_kind(model: str) -> ProviderKind:
         return ProviderKind.ANTHROPIC
     if resolved.startswith("grok-"):
         return ProviderKind.XAI
-    if resolved.startswith("gpt-") or resolved.startswith("o1") or resolved.startswith("o3"):
+    if any(resolved.startswith(p) for p in ("gpt-", "o1", "o3", "o4", "codex")):
         return ProviderKind.OPENAI
     if is_ollama_model(resolved):
         return ProviderKind.OLLAMA

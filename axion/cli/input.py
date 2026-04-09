@@ -33,11 +33,18 @@ def _get_slash_commands() -> list[str]:
     return [f"/{name}" for name in reg.command_names()]
 
 MODEL_COMPLETIONS = [
+    # Anthropic
     "opus", "sonnet", "haiku",
-    "claude-opus-4-6", "claude-sonnet-4-6", "claude-haiku-4-5",
-    "gpt-4o", "gpt-4o-mini", "o1", "o3", "o3-mini",
-    "grok-2",
-    "llama3.1", "mistral", "codellama", "deepseek", "phi3", "gemma2", "qwen",
+    # OpenAI GPT
+    "gpt-4o", "gpt-4o-mini", "gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano",
+    # OpenAI reasoning
+    "o1", "o1-mini", "o3", "o3-mini", "o4-mini",
+    # OpenAI Codex
+    "codex", "codex-mini",
+    # xAI
+    "grok-2", "grok-3",
+    # Local (Ollama)
+    "llama3.1", "llama4", "mistral", "codellama", "deepseek", "phi", "gemma", "qwen",
 ]
 
 
