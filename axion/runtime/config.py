@@ -225,10 +225,10 @@ class ConfigLoader:
     Maps to: rust/crates/runtime/src/config.rs::ConfigLoader
 
     Resolution order (later overrides earlier):
-      1. User: ~/.claude/settings.json, ~/.config/claw/settings.json
-      2. Project: .claude.json
-      3. Local: .claude/settings.json
-      4. Local: .claude/settings.local.json
+      1. User: ~/.axion/settings.json, ~/.config/axion/settings.json, ~/.claude/settings.json
+      2. Project: .axion.json, .claude.json
+      3. Local: .axion/settings.json, .claude/settings.json
+      4. Local: .axion/settings.local.json, .claude/settings.local.json
       5. Environment variables
     """
 
@@ -247,15 +247,20 @@ class ConfigLoader:
                 entries.append(ConfigEntry(source=ConfigSource.USER, path=user_path, data=data))
                 self._deep_merge(merged, data)
 
-        # 2. Project config
-        for proj_path in [self.project_dir / ".claude.json"]:
+        # 2. Project config (.axion.json first, .claude.json fallback)
+        for proj_path in [
+            self.project_dir / ".axion.json",
+            self.project_dir / ".claude.json",
+        ]:
             data = self._load_json(proj_path)
             if data is not None:
                 entries.append(ConfigEntry(source=ConfigSource.PROJECT, path=proj_path, data=data))
                 self._deep_merge(merged, data)
 
-        # 3-4. Local config
+        # 3-4. Local config (.axion/ first, .claude/ fallback)
         for local_path in [
+            self.project_dir / ".axion" / "settings.json",
+            self.project_dir / ".axion" / "settings.local.json",
             self.project_dir / ".claude" / "settings.json",
             self.project_dir / ".claude" / "settings.local.json",
         ]:
@@ -265,7 +270,7 @@ class ConfigLoader:
                 self._deep_merge(merged, data)
 
         # 5. Environment overrides
-        env_model = os.environ.get("CLAUDE_MODEL") or os.environ.get("CLAW_MODEL")
+        env_model = os.environ.get("AXION_MODEL") or os.environ.get("CLAUDE_MODEL")
 
         # Build feature config
         feature = self._extract_features(merged)
@@ -331,8 +336,9 @@ class ConfigLoader:
     def _user_config_paths() -> list[Path]:
         home = Path.home()
         paths = [
-            home / ".claude" / "settings.json",
+            home / ".axion" / "settings.json",
             home / ".config" / "axion" / "settings.json",
+            home / ".claude" / "settings.json",  # backwards compat
         ]
         # Check CLAUDE_CONFIG_DIR env
         config_dir = os.environ.get("CLAUDE_CONFIG_DIR")

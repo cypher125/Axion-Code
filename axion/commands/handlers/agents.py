@@ -35,8 +35,10 @@ def discover_agents(cwd: Path) -> list[AgentSummary]:
     """Discover agent definitions in the project."""
     agents: list[AgentSummary] = []
 
-    # Check .claude/agents/ directory
-    agents_dir = cwd / ".claude" / "agents"
+    # Check .axion/agents/ first, .claude/agents/ for backwards compat
+    agents_dir = cwd / ".axion" / "agents"
+    if not agents_dir.exists():
+        agents_dir = cwd / ".claude" / "agents"
     if agents_dir.exists():
         for f in agents_dir.iterdir():
             if f.suffix == ".md":

@@ -34,8 +34,10 @@ def discover_skills(cwd: Path) -> list[SkillSummary]:
     """Discover skill definitions in the project."""
     skills: list[SkillSummary] = []
 
-    # Check .claude/skills/ directory (new location)
-    skills_dir = cwd / ".claude" / "skills"
+    # Check .axion/skills/ first, .claude/skills/ for backwards compat
+    skills_dir = cwd / ".axion" / "skills"
+    if not skills_dir.exists():
+        skills_dir = cwd / ".claude" / "skills"
     if skills_dir.exists():
         for f in skills_dir.iterdir():
             if f.suffix == ".md":
@@ -45,7 +47,7 @@ def discover_skills(cwd: Path) -> list[SkillSummary]:
                     path=str(f),
                 ))
 
-    # Check .claude/commands/ directory (legacy)
+    # Check .claude/commands/ (legacy)
     commands_dir = cwd / ".claude" / "commands"
     if commands_dir.exists():
         for f in commands_dir.iterdir():

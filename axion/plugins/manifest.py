@@ -192,11 +192,13 @@ def _is_system_command(cmd: str) -> bool:
 
 def load_manifest_from_directory(root: Path) -> PluginManifest | None:
     """Load a plugin manifest from a directory."""
-    manifest_path = root / ".claude-plugin" / "plugin.json"
+    manifest_path = root / ".axion-plugin" / "plugin.json"
     if not manifest_path.exists():
-        manifest_path = root / "plugin.json"
+        manifest_path = root / ".claude-plugin" / "plugin.json"  # backwards compat
         if not manifest_path.exists():
-            return None
+            manifest_path = root / "plugin.json"
+            if not manifest_path.exists():
+                return None
 
     try:
         data = json.loads(manifest_path.read_text(encoding="utf-8"))

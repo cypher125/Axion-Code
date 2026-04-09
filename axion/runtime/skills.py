@@ -19,8 +19,8 @@ logger = logging.getLogger(__name__)
 
 # Directories searched (relative to cwd) when resolving a skill by name.
 _SKILL_SEARCH_DIRS: list[str] = [
-    ".claude/skills",
-    ".claude/commands",
+    ".axion/skills", ".claude/skills",
+    ".axion/commands", ".claude/commands",
     ".axion/skills",
 ]
 

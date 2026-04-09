@@ -393,18 +393,18 @@ Keys are saved to `~/.axion/credentials/` with restricted file permissions. No e
 
 Axion merges configuration from multiple sources (later overrides earlier):
 
-1. **User**: `~/.claude/settings.json`
-2. **Project**: `.claude.json` in repo root
-3. **Local**: `.claude/settings.json` (gitignored)
-4. **Local override**: `.claude/settings.local.json`
-5. **Environment**: `ANTHROPIC_API_KEY`, `CLAUDE_MODEL`, `OLLAMA_BASE_URL`, etc.
+1. **User**: `~/.axion/settings.json`
+2. **Project**: `.axion.json` in repo root
+3. **Local**: `.axion/settings.json` (gitignored)
+4. **Local override**: `.axion/settings.local.json`
+5. **Environment**: `ANTHROPIC_API_KEY`, `AXION_MODEL`, `OLLAMA_BASE_URL`, etc.
 
-### CLAUDE.md
+### AXION.md
 
-Drop a `CLAUDE.md` in your project root to give Axion context about your codebase:
+Drop an `AXION.md` in your project root to give Axion context about your codebase:
 
 ```markdown
-# CLAUDE.md
+# AXION.md
 
 ## Project overview
 This is a Django REST API for managing user accounts.
@@ -418,7 +418,7 @@ This is a Django REST API for managing user accounts.
 - Prefer dataclasses over dicts
 ```
 
-Axion walks up the directory tree and includes all `CLAUDE.md` files it finds — monorepos with nested instruction files at different levels work automatically. Files are deduplicated by content hash and truncated to a 12,000 character budget.
+Axion walks up the directory tree and includes all `AXION.md` files it finds — monorepos with nested instruction files at different levels work automatically. Files are deduplicated by content hash and truncated to a 12,000 character budget.
 
 ## Plugin System
 
