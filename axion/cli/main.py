@@ -31,7 +31,6 @@ from typing import Any
 import click
 from rich.console import Console
 from rich.markdown import Markdown
-from rich.panel import Panel
 
 from axion import __version__
 from axion.api.client import (
@@ -1505,7 +1504,10 @@ async def run_repl(
 
     def on_text_delta(text: str) -> None:
         text_buffer.append(text)
-        # Don't render streaming text — collect it and render as panel at end
+        if output_format == "json":
+            return
+        # Stream text live so the user sees progress immediately
+        console.print(text, end="", highlight=False)
 
     def on_tool_use_cb(tool_name: str, tool_input: str) -> None:
         """Show tool invocation in real-time as it happens."""
@@ -1701,15 +1703,9 @@ async def run_repl(
                     json_out = _build_json_output(summary, runtime.model)
                     click.echo(json.dumps(json_out))
                 else:
-                    # Render the full response text in a bordered panel
-                    full_text = "".join(text_buffer).strip()
-                    if full_text:
-                        console.print(Panel(
-                            Markdown(full_text),
-                            border_style="dim",
-                            padding=(1, 2),
-                        ))
-                    # Tool use/results already shown in real-time via callbacks
+                    # Text was already streamed live — just add a newline
+                    if text_buffer:
+                        console.print()  # Newline after streamed text
 
                     # Cost line with TUI styling
                     if summary.usage.total_tokens() > 0:
