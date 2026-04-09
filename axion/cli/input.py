@@ -35,12 +35,14 @@ def _get_slash_commands() -> list[str]:
 MODEL_COMPLETIONS = [
     # Anthropic
     "opus", "sonnet", "haiku",
-    # OpenAI GPT
+    # OpenAI GPT-4
     "gpt-4o", "gpt-4o-mini", "gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano",
-    # OpenAI reasoning
-    "o1", "o1-mini", "o3", "o3-mini", "o4-mini",
+    # OpenAI GPT-5
+    "gpt-5", "gpt-5-mini", "gpt-5-nano", "gpt-5-pro", "gpt-5.4", "gpt-5.4-mini",
     # OpenAI Codex
-    "codex", "codex-mini",
+    "codex", "gpt-5-codex",
+    # OpenAI reasoning
+    "o1", "o3", "o3-mini", "o3-pro", "o4-mini",
     # xAI
     "grok-2", "grok-3",
     # Local (Ollama)

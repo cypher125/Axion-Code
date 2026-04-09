@@ -659,6 +659,22 @@ async def _handle_slash_command(
             return f"Model set to: {new_model}"
         return f"Current model: {runtime.model}"
 
+    # --- Models (list available) ---
+    if cmd == "models":
+        try:
+            from axion.api.ollama import OllamaClient
+            client = OllamaClient()
+            import asyncio
+            models = asyncio.get_event_loop().run_until_complete(client.list_models())
+            if models:
+                lines_out = ["Available Ollama models:"]
+                for m in models:
+                    lines_out.append(f"  {m.name} ({m.size})")
+                return "\n".join(lines_out)
+            return "No Ollama models found. Is Ollama running?"
+        except Exception:
+            return "Ollama not available. Install from https://ollama.ai"
+
     # --- Compact ---
     if cmd == "compact":
         tokens_before = estimate_session_tokens(session)

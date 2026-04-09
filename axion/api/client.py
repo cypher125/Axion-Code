@@ -24,7 +24,7 @@ MODEL_ALIASES: dict[str, str] = {
     "sonnet[1m]": "claude-sonnet-4-6",
     "haiku[1m]": "claude-haiku-4-5",
 
-    # OpenAI — GPT series
+    # OpenAI — GPT-4 series
     "gpt4": "gpt-4o",
     "gpt4o": "gpt-4o",
     "gpt-4": "gpt-4o",
@@ -35,17 +35,32 @@ MODEL_ALIASES: dict[str, str] = {
     "gpt-4.1-mini": "gpt-4.1-mini",
     "gpt-4.1-nano": "gpt-4.1-nano",
 
+    # OpenAI — GPT-5 series
+    "gpt5": "gpt-5",
+    "gpt-5": "gpt-5",
+    "5": "gpt-5",
+    "gpt-5-mini": "gpt-5-mini",
+    "5-mini": "gpt-5-mini",
+    "gpt-5-nano": "gpt-5-nano",
+    "5-nano": "gpt-5-nano",
+    "gpt-5-pro": "gpt-5-pro",
+    "5-pro": "gpt-5-pro",
+    "gpt-5.4": "gpt-5.4",
+    "gpt-5.4-mini": "gpt-5.4-mini",
+    "gpt-5.4-nano": "gpt-5.4-nano",
+    "gpt-5.4-pro": "gpt-5.4-pro",
+
+    # OpenAI — Codex (GPT-5 based coding models)
+    "codex": "gpt-5-codex",
+    "codex-mini": "gpt-5.1-codex-mini",
+
     # OpenAI — o-series (reasoning)
     "o1": "o1",
-    "o1-mini": "o1-mini",
     "o1-pro": "o1-pro",
     "o3": "o3",
     "o3-mini": "o3-mini",
+    "o3-pro": "o3-pro",
     "o4-mini": "o4-mini",
-
-    # OpenAI — Codex
-    "codex": "codex-mini-latest",
-    "codex-mini": "codex-mini-latest",
 
     # xAI
     "grok": "grok-2",
@@ -102,7 +117,7 @@ def detect_provider_kind(model: str) -> ProviderKind:
         return ProviderKind.ANTHROPIC
     if resolved.startswith("grok-"):
         return ProviderKind.XAI
-    if any(resolved.startswith(p) for p in ("gpt-", "o1", "o3", "o4", "codex")):
+    if any(resolved.startswith(p) for p in ("gpt-", "o1", "o3", "o4", "codex", "gpt-5")):
         return ProviderKind.OPENAI
     if is_ollama_model(resolved):
         return ProviderKind.OLLAMA
