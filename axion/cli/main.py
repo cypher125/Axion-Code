@@ -1769,6 +1769,9 @@ async def run_repl(
                 elif "rate limit" in error_msg.lower() or "429" in error_msg:
                     console.print(f"[yellow]Rate limited: {error_msg}[/yellow]")
                     console.print("[dim]Wait a moment and try again, or switch to a different model with /model[/dim]")
+                elif "only supported in" in error_msg.lower() or "v1/responses" in error_msg.lower():
+                    console.print(f"[yellow]Model not compatible: {runtime.model}[/yellow]")
+                    console.print("[dim]This model requires a different API. Try /model gpt-5 or /model gpt-4.1 instead.[/dim]")
                 elif any(
                     kw in error_msg.lower()
                     for kw in ("timeout", "connect", "readerror", "read error", "network", "httpx")

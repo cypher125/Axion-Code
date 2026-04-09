@@ -50,9 +50,9 @@ MODEL_ALIASES: dict[str, str] = {
     "gpt-5.4-nano": "gpt-5.4-nano",
     "gpt-5.4-pro": "gpt-5.4-pro",
 
-    # OpenAI — Codex (GPT-5 based coding models)
-    "codex": "gpt-5-codex",
-    "codex-mini": "gpt-5.1-codex-mini",
+    # OpenAI — Codex (uses Responses API — map to GPT-5 chat equivalents for now)
+    "codex": "gpt-5",
+    "codex-mini": "gpt-5-mini",
 
     # OpenAI — o-series (reasoning)
     "o1": "o1",
