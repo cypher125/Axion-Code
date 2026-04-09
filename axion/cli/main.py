@@ -1488,6 +1488,36 @@ async def run_repl(
         try:
             session = Session.load(path)
             console.print(f"[dim]Resumed session {session.session_id} ({session.message_count()} messages)[/dim]")
+
+            # Show last few messages as history preview
+            if session.messages and output_format != "json":
+                console.print()
+                console.print("[bold]Recent conversation:[/bold]")
+                console.print("[dim]─────────────────────────────────────────[/dim]")
+                # Show last 6 messages (3 turns of user+assistant)
+                recent = session.messages[-6:]
+                for msg in recent:
+                    role = msg.role.value
+                    if role == "user":
+                        label = "[bold cyan]You:[/bold cyan]"
+                    elif role == "assistant":
+                        label = "[bold #64ffda]Axion:[/bold #64ffda]"
+                    else:
+                        continue
+                    # Get first text block
+                    text = ""
+                    for block in msg.blocks:
+                        if hasattr(block, "text"):
+                            text = block.text
+                            break
+                    if text:
+                        # Truncate long messages
+                        preview = text[:150].replace("\n", " ")
+                        if len(text) > 150:
+                            preview += "..."
+                        console.print(f"  {label} {preview}")
+                console.print("[dim]─────────────────────────────────────────[/dim]")
+                console.print()
         except Exception as exc:
             console.print(f"[red]Failed to load session: {exc}[/red]")
             return 1
