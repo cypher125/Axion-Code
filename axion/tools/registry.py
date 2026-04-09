@@ -372,16 +372,33 @@ class BuiltinToolExecutor:
                 return f"Tool '{tool_name}' is not yet implemented."
 
     async def _exec_bash(self, params: dict[str, Any]) -> str:
+        import sys
         from pathlib import Path
 
+        cmd = params.get("command", "")
+        timeout = int(params.get("timeout", 60_000))  # 60s default (was 120s)
+
+        # Show a progress indicator on stderr so user knows something is running
+        desc = params.get("description", "")
+        if desc:
+            sys.stderr.write(f"\r  ⏳ {desc}...")
+            sys.stderr.flush()
+        elif len(cmd) > 50:
+            sys.stderr.write(f"\r  ⏳ Running: {cmd[:50]}...")
+            sys.stderr.flush()
+
         cmd_input = BashCommandInput(
-            command=params.get("command", ""),
-            timeout_ms=int(params.get("timeout", 120_000)),
-            description=params.get("description", ""),
+            command=cmd,
+            timeout_ms=timeout,
+            description=desc,
             run_in_background=params.get("run_in_background", False),
             cwd=Path(self.cwd) if self.cwd else None,
         )
         result = await execute_bash(cmd_input)
+
+        # Clear the progress indicator
+        sys.stderr.write("\r\033[K")
+        sys.stderr.flush()
 
         output_parts = []
         if result.stdout:
