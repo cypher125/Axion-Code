@@ -538,12 +538,21 @@ def _build_chat_completion_request(
     for message in request.messages:
         messages.extend(_translate_message(message))
 
+    # GPT-5+, o1, o3, o4 models use max_completion_tokens instead of max_tokens
+    model_lower = request.model.lower()
+    uses_new_param = any(
+        model_lower.startswith(p) for p in ("gpt-5", "o1", "o3", "o4")
+    )
+
     payload: dict[str, Any] = {
         "model": request.model,
-        "max_tokens": request.max_tokens,
         "messages": messages,
         "stream": request.stream,
     }
+    if uses_new_param:
+        payload["max_completion_tokens"] = request.max_tokens
+    else:
+        payload["max_tokens"] = request.max_tokens
 
     # OpenAI requires stream_options for usage in streaming
     if request.stream and _should_request_stream_usage(config):
