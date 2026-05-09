@@ -79,6 +79,7 @@ SLASH_COMMAND_SPECS: list[SlashCommandSpec] = [
     # -- Auth --
     SlashCommandSpec(name="login", summary="Save API key (axion login --provider openai)", category="auth"),
     SlashCommandSpec(name="logout", summary="Remove saved credentials", category="auth"),
+    SlashCommandSpec(name="auth-mode", aliases=["auth"], summary="Show or switch auth (subscription/api)", argument_hint="[subscription|api|status]", category="auth"),
 
     # -- Workflow --
     SlashCommandSpec(name="plan", summary="Plan before coding (read-only exploration)", argument_hint="<task>", category="workflow"),
@@ -88,6 +89,9 @@ SLASH_COMMAND_SPECS: list[SlashCommandSpec] = [
     SlashCommandSpec(name="test", summary="Generate tests for a file", argument_hint="<file> [pytest|jest]", category="workflow"),
     SlashCommandSpec(name="init-project", aliases=["scaffold"], summary="Scaffold project from template", argument_hint="[react|django|fastapi|express|cli]", category="workflow"),
     SlashCommandSpec(name="security-review", summary="AI security audit of code", argument_hint="[file]", category="workflow"),
+
+    # -- Media --
+    SlashCommandSpec(name="image", summary="Paste image from clipboard or file path", argument_hint="[path]", category="media"),
 
     # -- Utility --
     SlashCommandSpec(name="context", summary="Show context window usage (tokens/capacity)", category="utility"),

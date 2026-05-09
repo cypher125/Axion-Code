@@ -372,20 +372,11 @@ class BuiltinToolExecutor:
                 return f"Tool '{tool_name}' is not yet implemented."
 
     async def _exec_bash(self, params: dict[str, Any]) -> str:
-        import sys
         from pathlib import Path
 
         cmd = params.get("command", "")
-        timeout = int(params.get("timeout", 60_000))  # 60s default (was 120s)
-
-        # Show a progress indicator on stderr so user knows something is running
+        timeout = int(params.get("timeout", 60_000))  # 60s default
         desc = params.get("description", "")
-        if desc:
-            sys.stderr.write(f"\r  ⏳ {desc}...")
-            sys.stderr.flush()
-        elif len(cmd) > 50:
-            sys.stderr.write(f"\r  ⏳ Running: {cmd[:50]}...")
-            sys.stderr.flush()
 
         cmd_input = BashCommandInput(
             command=cmd,
@@ -395,10 +386,6 @@ class BuiltinToolExecutor:
             cwd=Path(self.cwd) if self.cwd else None,
         )
         result = await execute_bash(cmd_input)
-
-        # Clear the progress indicator
-        sys.stderr.write("\r\033[K")
-        sys.stderr.flush()
 
         output_parts = []
         if result.stdout:
@@ -484,10 +471,14 @@ class BuiltinToolExecutor:
     async def _exec_web_fetch(params: dict[str, Any]) -> str:
         """Fetch content from a URL."""
         import httpx
+        import sys as _sys
 
         url = params.get("url", "")
         if not url:
             return "Error: url parameter is required"
+
+        _sys.stderr.write(f"\r\033[K  \u28cb Fetching {url[:80]}...")
+        _sys.stderr.flush()
 
         try:
             async with httpx.AsyncClient(
@@ -520,6 +511,9 @@ class BuiltinToolExecutor:
             return f"Error: Request to {url} timed out after 30 seconds"
         except httpx.HTTPError as exc:
             return f"Error fetching {url}: {exc}"
+        finally:
+            _sys.stderr.write("\r\033[K")
+            _sys.stderr.flush()
 
     # -----------------------------------------------------------------------
     # WebSearch — uses DuckDuckGo HTML search (no API key needed)
@@ -532,9 +526,14 @@ class BuiltinToolExecutor:
 
         import httpx
 
+        import sys as _sys
+
         query = params.get("query", "")
         if not query:
             return "Error: query parameter is required"
+
+        _sys.stderr.write(f"\r\033[K  \u28cb Searching: {query[:60]}...")
+        _sys.stderr.flush()
 
         try:
             async with httpx.AsyncClient(
@@ -598,6 +597,9 @@ class BuiltinToolExecutor:
             return "Error: Search request timed out"
         except httpx.HTTPError as exc:
             return f"Error performing search: {exc}"
+        finally:
+            _sys.stderr.write("\r\033[K")
+            _sys.stderr.flush()
 
     # -----------------------------------------------------------------------
     # TodoWrite — manages a task list
@@ -643,7 +645,8 @@ class BuiltinToolExecutor:
 
         Spawns a new axion process with the agent's prompt, runs it, and returns
         the result. This provides context isolation — the sub-agent gets a fresh
-        conversation.
+        conversation. Multiple Agent calls run in parallel via asyncio.gather
+        in the conversation runtime.
         """
         import asyncio
         import sys
@@ -654,6 +657,10 @@ class BuiltinToolExecutor:
 
         if not prompt_text:
             return "Error: prompt parameter is required"
+
+        # Show progress indicator
+        sys.stderr.write(f"\r  🔀 Spawning agent: {description}...\n")
+        sys.stderr.flush()
 
         # Build the sub-agent command
         cmd = [sys.executable, "-m", "axion.cli.main", "-p", prompt_text]
@@ -674,18 +681,39 @@ class BuiltinToolExecutor:
                 process.communicate(), timeout=300.0,  # 5 min timeout
             )
 
+            exit_code = process.returncode
             output = stdout.decode("utf-8", errors="replace")
+            stderr_text = stderr.decode("utf-8", errors="replace")
+
+            # Clear progress
+            sys.stderr.write(f"\r  ✅ Agent completed: {description}\n")
+            sys.stderr.flush()
+
+            if exit_code != 0 and not output.strip():
+                return f"Agent failed (exit code {exit_code}). stderr: {stderr_text[:1000]}"
 
             # Try to parse JSON output and extract the message
             try:
                 data = json.loads(output)
-                return data.get("message", output)
+                message = data.get("message", "")
+                if message:
+                    return message
+                # If no message, return the full JSON summary
+                return json.dumps(data, indent=2)
             except json.JSONDecodeError:
-                return output if output.strip() else f"Agent completed with no output. stderr: {stderr.decode()[:500]}"
+                return output if output.strip() else f"Agent completed with no output. stderr: {stderr_text[:500]}"
 
         except asyncio.TimeoutError:
+            sys.stderr.write(f"\r  ⏰ Agent timed out: {description}\n")
+            sys.stderr.flush()
+            try:
+                process.kill()  # type: ignore[possibly-undefined]
+            except Exception:
+                pass
             return f"Agent timed out after 300 seconds. Task: {description}"
         except Exception as exc:
+            sys.stderr.write(f"\r  ❌ Agent failed: {description}\n")
+            sys.stderr.flush()
             return f"Agent execution failed: {exc}"
 
     # -----------------------------------------------------------------------

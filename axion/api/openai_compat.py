@@ -597,7 +597,33 @@ def _translate_message(message: InputMessage) -> list[dict[str, Any]]:
         return [msg]
 
     # User or other roles: expand each block into its own message
-    results: list[dict[str, Any]] = []
+    # Check if there are images — if so, combine text+images into one message
+    from axion.api.types import ImageInputBlock
+
+    has_images = any(isinstance(b, ImageInputBlock) for b in message.content)
+
+    if has_images:
+        # OpenAI requires multi-part content array for vision
+        parts: list[dict[str, Any]] = []
+        tool_results: list[dict[str, Any]] = []
+        for block in message.content:
+            if isinstance(block, TextInputBlock):
+                parts.append({"type": "text", "text": block.text})
+            elif isinstance(block, ImageInputBlock):
+                parts.append(block.to_openai_dict())
+            elif isinstance(block, ToolResultBlock):
+                tool_results.append({
+                    "role": "tool",
+                    "tool_call_id": block.tool_use_id,
+                    "content": _flatten_tool_result_content(block),
+                })
+        results: list[dict[str, Any]] = []
+        if parts:
+            results.append({"role": "user", "content": parts})
+        results.extend(tool_results)
+        return results
+
+    results = []
     for block in message.content:
         if isinstance(block, TextInputBlock):
             results.append({"role": "user", "content": block.text})

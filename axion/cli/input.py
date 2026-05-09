@@ -221,19 +221,39 @@ class InputSession:
             return HTML(
                 " <b>axion</b> │ /help for commands │ Ctrl+C to interrupt"
             )
+        mode = getattr(self, "_status_auth_mode", "")
+        model_lc = (self._status_model or "").lower()
+        if mode == "subscription":
+            # ChatGPT for codex, Pro/Max for Claude
+            sub_label = "ChatGPT" if "codex" in model_lc else "Pro/Max"
+            cost_part = sub_label
+        elif mode == "local":
+            cost_part = "local"
+        elif mode == "api":
+            cost_part = f"API · ${self._status_cost:.4f}"
+        else:
+            cost_part = f"${self._status_cost:.4f}"
         return HTML(
             f" <b>{self._status_model}</b>"
             f" │ turn {self._status_turn}"
             f" │ {self._status_tokens:,} tokens"
-            f" │ ${self._status_cost:.4f}"
+            f" │ {cost_part}"
         )
 
-    def update_status(self, model: str, tokens: int, cost: float, turn: int) -> None:
+    def update_status(
+        self,
+        model: str,
+        tokens: int,
+        cost: float,
+        turn: int,
+        auth_mode: str = "",
+    ) -> None:
         """Update toolbar data (called after each turn)."""
         self._status_model = model
         self._status_tokens = tokens
         self._status_cost = cost
         self._status_turn = turn
+        self._status_auth_mode = auth_mode
 
     async def prompt(self, prompt_text: str = "axion") -> str | None:
         """Get input with a clean prompt, placeholder hint, and fixed toolbar."""

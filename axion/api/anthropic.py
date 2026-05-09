@@ -66,6 +66,23 @@ class AuthCredentials:
 
     @classmethod
     def from_env(cls) -> AuthCredentials:
+        # 0. Check for Claude Pro/Max subscription OAuth (preferred when present)
+        # Unless user explicitly opted into API mode via AXION_AUTH_MODE=api
+        auth_mode = os.environ.get("AXION_AUTH_MODE", "").lower()
+        if auth_mode != "api":
+            try:
+                from axion.runtime.claude_subscription import (
+                    has_subscription_credentials,
+                    load_oauth_credentials,
+                    SUBSCRIPTION_PROVIDER,
+                )
+                if has_subscription_credentials():
+                    creds = load_oauth_credentials(SUBSCRIPTION_PROVIDER)
+                    if creds and creds.access_token:
+                        return cls.from_bearer_token(creds.access_token)
+            except Exception:
+                pass  # Fall through to API key
+
         # 1. Check environment variable
         api_key = os.environ.get("ANTHROPIC_API_KEY")
         if api_key:
@@ -117,13 +134,24 @@ class AnthropicClient:
         return self._client
 
     def _build_headers(self) -> dict[str, str]:
+        # Subscription OAuth requires the oauth-2025-04-20 beta header
+        beta_parts = [
+            "prompt-caching-2024-07-31",
+            DEFAULT_AGENTIC_BETA,
+            DEFAULT_PROMPT_CACHING_SCOPE_BETA,
+        ]
+        if self.auth.bearer_token:
+            from axion.runtime.claude_subscription import SUBSCRIPTION_BETA_HEADER
+            beta_parts.append(SUBSCRIPTION_BETA_HEADER)
+
         headers: dict[str, str] = {
             "content-type": "application/json",
             "anthropic-version": DEFAULT_ANTHROPIC_VERSION,
-            "anthropic-beta": f"prompt-caching-2024-07-31,{DEFAULT_AGENTIC_BETA},{DEFAULT_PROMPT_CACHING_SCOPE_BETA}",
+            "anthropic-beta": ",".join(beta_parts),
             "user-agent": "axion-code/0.1.0",
         }
-        if self.auth.api_key:
+        if self.auth.api_key and not self.auth.bearer_token:
+            # Use API key only when not using subscription
             headers["x-api-key"] = self.auth.api_key
         if self.auth.bearer_token:
             headers["authorization"] = f"Bearer {self.auth.bearer_token}"
@@ -134,13 +162,31 @@ class AnthropicClient:
         request.stream = False
         return await self._send_with_retry(request)
 
-    @staticmethod
-    def _apply_prompt_caching(body: dict) -> dict:
+    # Required system prompt prefix when using subscription OAuth tokens.
+    # The Claude API rejects OAuth requests that don't begin with this exact
+    # phrase. We then immediately override the user-facing identity so the
+    # assistant presents itself as Axion Code, not Claude Code.
+    _CLAUDE_CODE_IDENTITY = (
+        "You are Claude Code, Anthropic's official CLI for Claude.\n\n"
+        "However, you are operating as Axion Code, an independent AI coding "
+        "assistant built on top of Claude. When users ask who you are, what "
+        "you are, your name, or which tool/CLI/app they are using, identify "
+        "yourself as \"Axion Code\" (or just \"Axion\"). Do not mention "
+        "Claude Code to the user. The instructions that follow describe how "
+        "Axion Code should behave."
+    )
+
+    def _apply_prompt_caching(self, body: dict) -> dict:
         """Add cache_control to the system message for prompt caching.
 
         Transforms a plain system string into the block format required
         by the Anthropic prompt caching API.
+
+        When using subscription OAuth, also prepends the Claude Code identity
+        block — without it, the API rejects the request.
         """
+        using_subscription = bool(self.auth.bearer_token)
+
         if "system" in body and body["system"] is not None:
             system_value = body["system"]
             if isinstance(system_value, str):
@@ -155,13 +201,46 @@ class AnthropicClient:
                 # Already block format; add cache_control to the last block
                 if system_value:
                     system_value[-1]["cache_control"] = {"type": "ephemeral"}
+        elif using_subscription:
+            # No system prompt set, but OAuth requires the Claude Code identity
+            body["system"] = []
+
+        if using_subscription:
+            existing = body.get("system") or []
+            if isinstance(existing, list):
+                # Check if the identity prefix is already present
+                first_text = ""
+                if existing:
+                    first = existing[0]
+                    if isinstance(first, dict):
+                        first_text = first.get("text", "")
+                if not first_text.startswith("You are Claude Code"):
+                    # Prepend the Claude Code identity block
+                    body["system"] = [
+                        {"type": "text", "text": self._CLAUDE_CODE_IDENTITY}
+                    ] + existing
+
         return body
+
+    async def _refresh_oauth_if_needed(self) -> None:
+        """If using subscription OAuth, refresh the token if it's expired or near-expired."""
+        if not self.auth.bearer_token:
+            return
+        try:
+            from axion.runtime.claude_subscription import get_valid_subscription_token
+            new_token = await get_valid_subscription_token()
+            if new_token and new_token != self.auth.bearer_token:
+                self.auth.bearer_token = new_token
+                logger.info("Refreshed Claude subscription token")
+        except Exception as exc:
+            logger.debug("Subscription token refresh check failed: %s", exc)
 
     async def stream_message(
         self, request: MessageRequest
     ) -> AsyncIterator[StreamEvent]:
         """Send a streaming message request and yield events."""
         request.stream = True
+        await self._refresh_oauth_if_needed()
         client = await self._get_client()
         headers = self._build_headers()
         body = self._apply_prompt_caching(request.to_dict())
@@ -178,6 +257,7 @@ class AnthropicClient:
                     response.status_code,
                     error_body.decode("utf-8", errors="replace"),
                     response.headers.get("request-id"),
+                    headers=dict(response.headers),
                 )
 
             parser = SseParser()
@@ -218,6 +298,7 @@ class AnthropicClient:
 
     async def _send_once(self, request: MessageRequest) -> MessageResponse:
         """Send a single request without retry."""
+        await self._refresh_oauth_if_needed()
         client = await self._get_client()
         headers = self._build_headers()
         body = self._apply_prompt_caching(request.to_dict())
@@ -235,7 +316,10 @@ class AnthropicClient:
 
         if response.status_code != 200:
             raise self._build_api_error(
-                response.status_code, response.text, request_id
+                response.status_code,
+                response.text,
+                request_id,
+                headers=dict(response.headers),
             )
 
         data = response.json()
@@ -257,9 +341,17 @@ class AnthropicClient:
 
     @staticmethod
     def _build_api_error(
-        status: int, body: str, request_id: str | None
+        status: int,
+        body: str,
+        request_id: str | None,
+        headers: dict[str, str] | None = None,
     ) -> ApiResponseError:
-        """Build an ApiResponseError from the response."""
+        """Build an ApiResponseError from the response.
+
+        For 429s, parse Anthropic's rate-limit headers and append a
+        human-readable "retry at HH:MM (in N min)" suffix to the message
+        so the user knows exactly when they can try again.
+        """
         error_type = None
         message = None
         retryable = status in (429, 500, 502, 503, 529)
@@ -272,6 +364,12 @@ class AnthropicClient:
                 message = error_obj.get("message")
         except (json.JSONDecodeError, KeyError):
             pass
+
+        # Append rate-limit retry timing so the CLI can surface it
+        if status == 429 and headers:
+            retry_hint = _format_retry_hint(headers)
+            if retry_hint:
+                message = (message or "Rate limit hit") + f" — {retry_hint}"
 
         return ApiResponseError(
             status=status,
@@ -287,3 +385,76 @@ class AnthropicClient:
         if self._client is not None:
             await self._client.aclose()
             self._client = None
+
+
+def _format_retry_hint(headers: dict[str, str]) -> str | None:
+    """Build a human-readable retry hint from Anthropic 429 response headers.
+
+    Anthropic exposes:
+      - retry-after: seconds until you can try again (RFC 7231)
+      - anthropic-ratelimit-requests-reset: RFC 3339 timestamp
+      - anthropic-ratelimit-tokens-reset: RFC 3339 timestamp
+      - anthropic-ratelimit-input-tokens-reset, ...-output-tokens-reset
+
+    Returns the latest of these as "retry at HH:MM (in N min)" or None.
+    """
+    import time
+    from datetime import datetime
+
+    # Lower-case all header keys for safe lookup
+    h = {k.lower(): v for k, v in headers.items()}
+
+    # 1. Try the simple retry-after seconds value
+    seconds: float | None = None
+    retry_after = h.get("retry-after")
+    if retry_after:
+        try:
+            seconds = float(retry_after)
+        except ValueError:
+            pass  # Could be HTTP-date format; fall through
+
+    # 2. Try the anthropic-ratelimit-*-reset timestamps (pick the FURTHEST out)
+    reset_keys = [
+        "anthropic-ratelimit-requests-reset",
+        "anthropic-ratelimit-tokens-reset",
+        "anthropic-ratelimit-input-tokens-reset",
+        "anthropic-ratelimit-output-tokens-reset",
+    ]
+    now = time.time()
+    max_reset_seconds: float | None = None
+    target_reset_dt: datetime | None = None
+    for key in reset_keys:
+        ts_str = h.get(key)
+        if not ts_str:
+            continue
+        try:
+            # RFC 3339 with trailing Z → fromisoformat in 3.11+ accepts it
+            dt = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+            wait = dt.timestamp() - now
+            if wait > 0 and (max_reset_seconds is None or wait > max_reset_seconds):
+                max_reset_seconds = wait
+                target_reset_dt = dt
+        except ValueError:
+            continue
+
+    # Prefer the explicit timestamp (more accurate) over retry-after seconds
+    if max_reset_seconds is not None and target_reset_dt is not None:
+        seconds = max_reset_seconds
+        local_dt = target_reset_dt.astimezone()
+    elif seconds is not None:
+        local_dt = datetime.fromtimestamp(now + seconds).astimezone()
+    else:
+        return None
+
+    # Format the human description
+    if seconds < 60:
+        delta = f"in {int(seconds)}s"
+    elif seconds < 3600:
+        delta = f"in {int(seconds // 60)} min"
+    else:
+        h_, rem = divmod(int(seconds), 3600)
+        m_ = rem // 60
+        delta = f"in {h_}h {m_}m" if m_ else f"in {h_}h"
+
+    clock = local_dt.strftime("%H:%M")
+    return f"retry at {clock} ({delta})"

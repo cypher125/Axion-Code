@@ -6,7 +6,7 @@ Maps to: rust/crates/api/src/client.rs
 from __future__ import annotations
 
 import enum
-from typing import AsyncIterator
+from typing import Any, AsyncIterator
 
 from axion.api.anthropic import AnthropicClient, AuthCredentials
 from axion.api.error import ApiError
@@ -50,9 +50,11 @@ MODEL_ALIASES: dict[str, str] = {
     "gpt-5.4-nano": "gpt-5.4-nano",
     "gpt-5.4-pro": "gpt-5.4-pro",
 
-    # OpenAI — Codex (uses Responses API — map to GPT-5 chat equivalents for now)
-    "codex": "gpt-5",
-    "codex-mini": "gpt-5-mini",
+    # OpenAI — Codex (real Codex models via the /v1/responses endpoint)
+    "codex": "gpt-5-codex",
+    "codex-mini": "gpt-5-codex-mini",
+    "gpt-5-codex": "gpt-5-codex",
+    "gpt-5-codex-mini": "gpt-5-codex-mini",
 
     # OpenAI — o-series (reasoning)
     "o1": "o1",
@@ -83,8 +85,15 @@ MODEL_ALIASES: dict[str, str] = {
 class ProviderKind(enum.Enum):
     ANTHROPIC = "anthropic"
     OPENAI = "openai"
+    OPENAI_CODEX = "openai_codex"  # /v1/responses endpoint
     XAI = "xai"
     OLLAMA = "ollama"
+
+
+def _is_codex_model(resolved: str) -> bool:
+    """Codex models require the /v1/responses endpoint."""
+    name = resolved.lower()
+    return "codex" in name
 
 
 def resolve_model_alias(model: str | None) -> str:
@@ -117,6 +126,9 @@ def detect_provider_kind(model: str) -> ProviderKind:
         return ProviderKind.ANTHROPIC
     if resolved.startswith("grok-"):
         return ProviderKind.XAI
+    # Codex models route to the Responses API, not Chat Completions
+    if _is_codex_model(resolved):
+        return ProviderKind.OPENAI_CODEX
     if any(resolved.startswith(p) for p in ("gpt-", "o1", "o3", "o4", "codex", "gpt-5")):
         return ProviderKind.OPENAI
     if is_ollama_model(resolved):
@@ -152,11 +164,13 @@ class ProviderClient:
         kind: ProviderKind,
         anthropic: AnthropicClient | None = None,
         openai_compat: OpenAiCompatClient | None = None,
+        openai_responses: Any = None,  # OpenAiResponsesClient — Any to avoid import cycle
         ollama: OllamaClient | None = None,
     ) -> None:
         self._kind = kind
         self._anthropic = anthropic
         self._openai_compat = openai_compat
+        self._openai_responses = openai_responses
         self._ollama = ollama
 
     @classmethod
@@ -184,6 +198,11 @@ class ProviderClient:
             client = OpenAiCompatClient.from_env(OpenAiCompatConfig.openai())
             return cls(kind=kind, openai_compat=client)
 
+        if kind == ProviderKind.OPENAI_CODEX:
+            from axion.api.openai_responses import OpenAiResponsesClient
+            responses_client = OpenAiResponsesClient.from_env()
+            return cls(kind=kind, openai_responses=responses_client)
+
         if kind == ProviderKind.OLLAMA:
             ollama_client = OllamaClient.from_env(model=resolved)
             return cls(kind=kind, ollama=ollama_client)
@@ -198,6 +217,8 @@ class ProviderClient:
         """Send a non-streaming message request."""
         if self._anthropic is not None:
             return await self._anthropic.send_message(request)
+        if self._openai_responses is not None:
+            return await self._openai_responses.send_message(request)
         if self._openai_compat is not None:
             return await self._openai_compat.send_message(request)
         if self._ollama is not None:
@@ -210,6 +231,10 @@ class ProviderClient:
         """Send a streaming request and yield events."""
         if self._anthropic is not None:
             async for event in self._anthropic.stream_message(request):
+                yield event
+            return
+        if self._openai_responses is not None:
+            async for event in self._openai_responses.stream_message(request):
                 yield event
             return
         if self._openai_compat is not None:
@@ -226,6 +251,8 @@ class ProviderClient:
         """Close underlying HTTP clients."""
         if self._anthropic is not None:
             await self._anthropic.close()
+        if self._openai_responses is not None:
+            await self._openai_responses.close()
         if self._openai_compat is not None:
             await self._openai_compat.close()
         if self._ollama is not None:

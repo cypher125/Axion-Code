@@ -348,7 +348,13 @@ def _describe_instruction_file(f: ContextFile, all_files: list[ContextFile]) -> 
 # ---------------------------------------------------------------------------
 
 def _render_config_section(config: RuntimeConfig) -> str:
-    """Render loaded config sources into the prompt."""
+    """Render loaded config sources into the prompt.
+
+    Lists which config files are loaded and the model-relevant settings only.
+    Does NOT dump the entire merged JSON — settings.json files can contain
+    hundreds of permission allowlist entries that bloat the system prompt
+    by 10K+ tokens with content the model doesn't need to know about.
+    """
     if not config.loaded_entries:
         return "# Runtime config\n - No settings files loaded."
 
@@ -356,13 +362,28 @@ def _render_config_section(config: RuntimeConfig) -> str:
     for entry in config.loaded_entries:
         lines.append(f" - Loaded {entry.source.value}: {entry.path}")
 
-    # Include merged config as context
+    # Surface only the model-relevant fields, not the whole settings file
     if config.merged:
-        import json
-        lines.append("")
-        lines.append("```json")
-        lines.append(json.dumps(config.merged, indent=2, default=str))
-        lines.append("```")
+        merged = config.merged
+        permissions = merged.get("permissions") or {}
+        relevant: dict[str, object] = {}
+        if "model" in merged:
+            relevant["model"] = merged["model"]
+        if isinstance(permissions, dict) and "defaultMode" in permissions:
+            relevant["permissionMode"] = permissions["defaultMode"]
+        if "outputStyle" in merged:
+            relevant["outputStyle"] = merged["outputStyle"]
+        env = merged.get("env")
+        if isinstance(env, dict) and env:
+            # Only show env var KEYS, not values (may contain secrets)
+            relevant["envKeys"] = sorted(env.keys())
+
+        if relevant:
+            import json
+            lines.append("")
+            lines.append("Effective settings:")
+            for k, v in relevant.items():
+                lines.append(f" - {k}: {json.dumps(v)}")
 
     return "\n".join(lines)
 
@@ -372,7 +393,13 @@ def _render_config_section(config: RuntimeConfig) -> str:
 # ---------------------------------------------------------------------------
 
 def _render_project_context(ctx: ProjectContext) -> str:
-    """Render project context section."""
+    """Render project context section.
+
+    Only includes lightweight signals (cwd, date, branch, dirty file count).
+    Does NOT include the full git diff — that bloats the system prompt by
+    tens of thousands of tokens and burns rate-limit budget on every turn.
+    The model can run `git diff` itself when it actually needs to see changes.
+    """
     lines = ["# Project context"]
     bullets = [
         f"Today's date is {ctx.current_date}.",
@@ -380,18 +407,23 @@ def _render_project_context(ctx: ProjectContext) -> str:
     ]
     if ctx.instruction_files:
         bullets.append(f"Instruction files discovered: {len(ctx.instruction_files)}.")
-    lines.extend(f" - {b}" for b in bullets)
 
+    # Compact git status: just the branch line and how many files are dirty
     if ctx.git_status:
-        lines.append("")
-        lines.append("Git status snapshot:")
-        lines.append(ctx.git_status)
+        status_lines = ctx.git_status.strip().splitlines()
+        branch_line = status_lines[0] if status_lines else ""
+        dirty_count = sum(1 for line in status_lines[1:] if line.strip())
+        if branch_line:
+            bullets.append(f"Git: {branch_line}")
+        if dirty_count:
+            bullets.append(
+                f"Working tree has {dirty_count} change(s). "
+                "Run git status / git diff if you need details."
+            )
+        else:
+            bullets.append("Working tree is clean.")
 
-    if ctx.git_diff:
-        lines.append("")
-        lines.append("Git diff snapshot:")
-        lines.append(ctx.git_diff)
-
+    lines.extend(f" - {b}" for b in bullets)
     return "\n".join(lines)
 
 

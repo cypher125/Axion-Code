@@ -105,6 +105,36 @@ class ToolUseInputBlock(InputContentBlock):
 
 
 @dataclass
+class ImageInputBlock(InputContentBlock):
+    """Image content block — base64-encoded image for vision models.
+
+    Works with both Anthropic (source.type=base64) and OpenAI (image_url).
+    """
+    media_type: str  # e.g. "image/png", "image/jpeg"
+    data: str  # base64-encoded image data
+
+    def to_dict(self) -> dict[str, Any]:
+        # Anthropic format
+        return {
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": self.media_type,
+                "data": self.data,
+            },
+        }
+
+    def to_openai_dict(self) -> dict[str, Any]:
+        """OpenAI format for image_url with base64 data URL."""
+        return {
+            "type": "image_url",
+            "image_url": {
+                "url": f"data:{self.media_type};base64,{self.data}",
+            },
+        }
+
+
+@dataclass
 class ToolResultBlock(InputContentBlock):
     tool_use_id: str
     content: list[ToolResultContent]

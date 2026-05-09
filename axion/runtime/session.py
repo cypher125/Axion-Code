@@ -58,6 +58,16 @@ class ToolUseBlock(ContentBlock):
 
 
 @dataclass(frozen=True)
+class ImageBlock(ContentBlock):
+    """Image content block — stores base64 data for session persistence."""
+    media_type: str  # e.g. "image/png", "image/jpeg"
+    data: str  # base64-encoded
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"type": "image", "media_type": self.media_type, "data": self.data}
+
+
+@dataclass(frozen=True)
 class ToolResultBlock(ContentBlock):
     tool_use_id: str
     tool_name: str
@@ -81,6 +91,11 @@ def content_block_from_dict(data: dict[str, Any]) -> ContentBlock:
         return TextBlock(text=data.get("text", ""))
     if block_type == "tool_use":
         return ToolUseBlock(id=data["id"], name=data["name"], input=data.get("input", ""))
+    if block_type == "image":
+        return ImageBlock(
+            media_type=data.get("media_type", "image/png"),
+            data=data.get("data", ""),
+        )
     if block_type == "tool_result":
         return ToolResultBlock(
             tool_use_id=data["tool_use_id"],
@@ -208,6 +223,17 @@ class Session:
                 role=MessageRole.USER,
                 blocks=[TextBlock(text=text)],
             )
+        )
+
+    def push_user_image(
+        self, media_type: str, data: str, text: str = ""
+    ) -> None:
+        """Append a user message with an image (and optional text)."""
+        blocks: list[ContentBlock] = [ImageBlock(media_type=media_type, data=data)]
+        if text:
+            blocks.append(TextBlock(text=text))
+        self.push_message(
+            ConversationMessage(role=MessageRole.USER, blocks=blocks)
         )
 
     def push_assistant_text(self, text: str, usage: TokenUsage | None = None) -> None:

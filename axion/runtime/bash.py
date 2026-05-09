@@ -170,11 +170,112 @@ def _prepare_sandbox_dirs(cwd: Path | None) -> dict[str, str]:
 
 
 # ---------------------------------------------------------------------------
+# Process helpers
+# ---------------------------------------------------------------------------
+
+def _kill_process(process: asyncio.subprocess.Process) -> None:
+    """Kill a subprocess safely."""
+    try:
+        process.kill()
+    except (ProcessLookupError, OSError):
+        pass
+
+
+async def _stream_process(
+    process: asyncio.subprocess.Process,
+    description: str = "",
+) -> tuple[bytes, str]:
+    """Read stdout fully while showing a live updating status line on stderr.
+
+    Shows a single line that keeps updating with the latest stderr output,
+    like Claude Code's "Running...", "Installing packages...", etc.
+
+    Returns (stdout_bytes, stderr_text).
+    """
+    assert process.stdout is not None
+    assert process.stderr is not None
+
+    stderr_lines: list[str] = []
+    _spinner_frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+    _frame_idx = [0]
+
+    def _clean_status(line: str) -> str:
+        """Extract a clean status message from a stderr line."""
+        line = line.strip()
+        if not line:
+            return ""
+        # Skip noisy lines (progress bars, ANSI escapes, blank/repeated)
+        if line.startswith(("\x1b", "\033")) or set(line) <= set("-=>#. "):
+            return ""
+        # Truncate to fit one line
+        return line[:80]
+
+    async def _read_stderr() -> None:
+        """Read stderr line-by-line and update the status line."""
+        assert process.stderr is not None
+        while True:
+            line_bytes = await process.stderr.readline()
+            if not line_bytes:
+                break
+            line = line_bytes.decode("utf-8", errors="replace").rstrip("\n\r")
+            stderr_lines.append(line)
+
+            status = _clean_status(line)
+            if status:
+                frame = _spinner_frames[_frame_idx[0] % len(_spinner_frames)]
+                _frame_idx[0] += 1
+                # Overwrite the same line — \r returns to start, \033[K clears to end
+                sys.stderr.write(f"\r\033[K  {frame} {status}")
+                sys.stderr.flush()
+
+    async def _read_stdout() -> bytes:
+        """Also show status updates from stdout for commands that log there."""
+        assert process.stdout is not None
+        chunks: list[bytes] = []
+        while True:
+            chunk = await process.stdout.read(4096)
+            if not chunk:
+                break
+            chunks.append(chunk)
+            # Extract last line for status
+            text = chunk.decode("utf-8", errors="replace")
+            last_line = text.rstrip().rsplit("\n", 1)[-1]
+            status = _clean_status(last_line)
+            if status:
+                frame = _spinner_frames[_frame_idx[0] % len(_spinner_frames)]
+                _frame_idx[0] += 1
+                sys.stderr.write(f"\r\033[K  {frame} {status}")
+                sys.stderr.flush()
+        return b"".join(chunks)
+
+    # Show initial status
+    label = description or "Running"
+    sys.stderr.write(f"\r\033[K  {_spinner_frames[0]} {label}...")
+    sys.stderr.flush()
+
+    # Run stderr reader concurrently with stdout collection
+    stderr_task = asyncio.create_task(_read_stderr())
+    stdout_bytes = await _read_stdout()
+    await stderr_task
+    await process.wait()
+
+    # Clear the status line
+    sys.stderr.write("\r\033[K")
+    sys.stderr.flush()
+
+    return stdout_bytes, "\n".join(stderr_lines)
+
+
+# ---------------------------------------------------------------------------
 # Main execution
 # ---------------------------------------------------------------------------
 
 async def execute_bash(input_cfg: BashCommandInput) -> BashCommandOutput:
     """Execute a bash command asynchronously.
+
+    Streams stderr to the terminal in real-time so the user can see progress
+    from long-running commands (builds, installs, copies).  Ctrl+C during
+    execution kills only this command, not the whole session.
 
     Maps to: rust/crates/runtime/src/bash.rs::execute_bash
     """
@@ -204,15 +305,22 @@ async def execute_bash(input_cfg: BashCommandInput) -> BashCommandOutput:
         )
 
         try:
-            stdout_bytes, stderr_bytes = await asyncio.wait_for(
-                process.communicate(), timeout=timeout_secs
+            # Stream stderr in real-time while collecting stdout
+            stdout_bytes, stderr_text = await asyncio.wait_for(
+                _stream_process(process, description=input_cfg.description),
+                timeout=timeout_secs,
+            )
+        except asyncio.CancelledError:
+            # Ctrl+C hit — kill just this command
+            _kill_process(process)
+            return BashCommandOutput(
+                stdout="",
+                stderr="Command cancelled by user (Ctrl+C)",
+                exit_code=None,
+                interrupted=True,
             )
         except asyncio.TimeoutError:
-            try:
-                process.kill()
-                await process.wait()
-            except ProcessLookupError:
-                pass
+            _kill_process(process)
             return BashCommandOutput(
                 stdout="",
                 stderr=f"Command exceeded timeout of {input_cfg.timeout_ms}ms",
@@ -222,7 +330,7 @@ async def execute_bash(input_cfg: BashCommandInput) -> BashCommandOutput:
             )
 
         stdout = truncate_output(stdout_bytes.decode("utf-8", errors="replace"))
-        stderr = truncate_output(stderr_bytes.decode("utf-8", errors="replace"))
+        stderr = truncate_output(stderr_text)
 
         exit_code = process.returncode
         return_code_interp = None

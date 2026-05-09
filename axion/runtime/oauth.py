@@ -134,18 +134,20 @@ def clear_oauth_credentials(provider: str) -> None:
 # ---------------------------------------------------------------------------
 
 def open_browser(url: str) -> bool:
-    """Open a URL in the default browser. Returns True on success."""
+    """Open a URL in the default browser. Returns True on success.
+
+    On Windows, `cmd /C start` interprets `&` in URLs as command separators,
+    truncating OAuth URLs with multiple query params. We use os.startfile
+    (Windows) and webbrowser.open (cross-platform) which handle this correctly.
+    """
     system = platform.system().lower()
     try:
-        if system == "darwin":
-            subprocess.Popen(["open", url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if system == "windows":
+            # os.startfile preserves & in URLs; cmd start does not
+            os.startfile(url)
             return True
-        elif system == "windows":
-            subprocess.Popen(
-                ["cmd", "/C", "start", "", url],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
+        elif system == "darwin":
+            subprocess.Popen(["open", url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             return True
         elif system == "linux":
             subprocess.Popen(
@@ -154,7 +156,14 @@ def open_browser(url: str) -> bool:
                 stderr=subprocess.DEVNULL,
             )
             return True
-    except (FileNotFoundError, OSError) as exc:
+    except (FileNotFoundError, OSError, AttributeError) as exc:
+        logger.warning("Native browser launcher failed: %s, falling back to webbrowser module", exc)
+
+    # Fallback: Python stdlib webbrowser (handles all platforms safely)
+    try:
+        import webbrowser
+        return webbrowser.open(url)
+    except Exception as exc:
         logger.warning("Failed to open browser: %s", exc)
     return False
 

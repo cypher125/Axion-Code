@@ -40,7 +40,9 @@ from axion.api.client import (
 from axion.cli.render import CLAW_THEME, MarkdownStreamState, TerminalRenderer
 from axion.cli.tui import (
     render_permission_panel,
+    render_tool_call_inline,
     render_tool_panel,
+    render_tool_result_inline,
     render_tool_result_panel,
     render_turn_cost,
     render_welcome_screen,
@@ -104,17 +106,86 @@ HISTORY_FILE = ".axion/repl_history"
 MAX_SESSION_LIST = 20
 
 
-def _auto_detect_model() -> str:
-    """Auto-detect which model to use based on available API keys.
+def _maybe_warn_subscription_unused(model: str) -> None:
+    """Warn when a saved subscription doesn't apply to the active model.
 
-    Checks saved keys and env vars in order: Anthropic > OpenAI > xAI > Ollama.
+    Common confusion: user runs `axion login --subscription --provider openai`
+    then runs axion on gpt-4o and wonders why it's still using API billing.
+    The OpenAI ChatGPT subscription only authorizes Codex (Responses API).
+    """
+    m = (model or "").lower()
+    try:
+        # ChatGPT subscription saved but model isn't codex
+        from axion.runtime.openai_subscription import has_openai_subscription_credentials
+        if has_openai_subscription_credentials() and "codex" not in m and m.startswith(("gpt-", "o1", "o3", "o4")):
+            console.print(
+                "[dim yellow]Note:[/dim yellow] [dim]you have a ChatGPT subscription saved, but it only "
+                f"works with codex models. [bold]{model}[/bold] uses your OpenAI API key. "
+                "Run [cyan]/model codex[/cyan] to use the subscription.[/dim]"
+            )
+            console.print()
+    except Exception:
+        pass
+
+
+def _detect_auth_mode_label(model: str) -> str:
+    """Return a UI badge label describing how the current model is authenticated.
+
+    Returns one of:
+      "subscription"  — Claude Pro/Max OR ChatGPT Plus/Pro/Business
+      "api"           — pay-per-token API key
+      "local"         — Ollama / local model (free, runs on user's machine)
+      ""              — unknown / no credentials
+    """
+    forced = os.environ.get("AXION_AUTH_MODE", "").lower()
+    m = (model or "").lower()
+
+    # Claude → Anthropic API or Pro/Max subscription
+    if m.startswith("claude"):
+        try:
+            from axion.runtime.claude_subscription import has_subscription_credentials
+            if forced != "api" and has_subscription_credentials():
+                return "subscription"
+        except Exception:
+            pass
+        return "api"
+
+    # Codex → OpenAI API or ChatGPT subscription
+    if "codex" in m:
+        try:
+            from axion.runtime.openai_subscription import has_openai_subscription_credentials
+            if forced != "api" and has_openai_subscription_credentials():
+                return "subscription"
+        except Exception:
+            pass
+        return "api"
+
+    # Ollama / local models — always free, no auth
+    if any(m.startswith(p) for p in ("llama", "mistral", "qwen", "deepseek", "phi", "gemma", "codellama")):
+        return "local"
+
+    # Other OpenAI / xAI models — always API key
+    if m.startswith(("gpt-", "o1", "o3", "o4", "grok-")):
+        return "api"
+
+    return ""
+
+
+def _auto_detect_model() -> str:
+    """Auto-detect which model to use based on available credentials.
+
+    Checks (in order): Claude subscription OAuth > Anthropic API > OpenAI > xAI > Ollama.
     Returns the default model for the first provider found.
     """
     from pathlib import Path as _P
 
     key_dir = _P.home() / ".axion" / "credentials"
 
-    # 1. Anthropic
+    # 0. Claude Pro/Max subscription (preferred)
+    if (key_dir / "anthropic-oauth.json").exists():
+        return "claude-sonnet-4-6"
+
+    # 1. Anthropic API key
     if os.environ.get("ANTHROPIC_API_KEY") or (key_dir / "anthropic.key").exists():
         return "claude-sonnet-4-6"
 
@@ -498,7 +569,27 @@ def _build_runtime(
     effective_perm = permission_mode
     if effective_perm == "allow" and cfg.feature_config.permission_mode:
         effective_perm = cfg.feature_config.permission_mode
-    mode = PermissionMode(effective_perm) if effective_perm != "allow" else PermissionMode.ALLOW
+
+    # Map Claude Code-style permission modes to Axion's PermissionMode enum
+    # (allows shared settings.json files between Claude Code and Axion)
+    _CLAUDE_CODE_MODE_MAP = {
+        "default": "prompt",
+        "acceptEdits": "workspace-write",
+        "plan": "read-only",
+        "bypassPermissions": "danger-full-access",
+        "dontAsk": "allow",
+    }
+    if effective_perm in _CLAUDE_CODE_MODE_MAP:
+        effective_perm = _CLAUDE_CODE_MODE_MAP[effective_perm]
+
+    try:
+        mode = PermissionMode(effective_perm) if effective_perm != "allow" else PermissionMode.ALLOW
+    except ValueError:
+        # Unknown permission mode in config — fall back to allow with a warning
+        console.print(
+            f"[yellow]Warning: unknown permission mode '{effective_perm}' in config — defaulting to 'allow'[/yellow]"
+        )
+        mode = PermissionMode.ALLOW
     policy = PermissionPolicy(mode=mode)
 
     # Build tool executor
@@ -660,19 +751,7 @@ async def _handle_slash_command(
 
     # --- Models (list available) ---
     if cmd == "models":
-        try:
-            from axion.api.ollama import OllamaClient
-            client = OllamaClient()
-            import asyncio
-            models = asyncio.get_event_loop().run_until_complete(client.list_models())
-            if models:
-                lines_out = ["Available Ollama models:"]
-                for m in models:
-                    lines_out.append(f"  {m.name} ({m.size})")
-                return "\n".join(lines_out)
-            return "No Ollama models found. Is Ollama running?"
-        except Exception:
-            return "Ollama not available. Install from https://ollama.ai"
+        return await _list_models(runtime)
 
     # --- Compact ---
     if cmd == "compact":
@@ -965,7 +1044,348 @@ async def _handle_slash_command(
             return "You're on the highest tier. No upgrade available."
         return f"Current plan: {info.tier}\n\n{msg}"
 
+    if cmd == "image":
+        return _handle_image_command(args, session, runtime)
+
+    if cmd == "auth-mode" or cmd == "auth":
+        return await _handle_auth_mode_command(args, runtime)
+
     return f"Command /{cmd} recognized but has no handler yet."
+
+
+async def _rebuild_provider_for_runtime(runtime: ConversationRuntime) -> str:
+    """Recreate runtime.provider with the current env/credential state.
+
+    Used by /auth-mode and /model so the auth switch takes effect right
+    away without needing to restart axion.
+    """
+    from axion.api.client import ProviderClient
+    try:
+        # Close the existing client first to release any open connections
+        try:
+            await runtime.provider.close()
+        except Exception:
+            pass
+        runtime.provider = ProviderClient.from_model(runtime.model)
+        return ""
+    except Exception as exc:
+        return f"  [yellow]Note: failed to rebuild provider client: {exc}[/yellow]"
+
+
+async def _handle_auth_mode_command(args: str, runtime: ConversationRuntime) -> str:
+    """Show or switch auth mode for both Anthropic and OpenAI."""
+    from axion.runtime.claude_subscription import has_subscription_credentials
+    from axion.runtime.openai_subscription import (
+        get_openai_subscription_plan,
+        has_openai_subscription_credentials,
+    )
+
+    arg = args.strip().lower()
+    forced = os.environ.get("AXION_AUTH_MODE", "").lower()
+
+    # Anthropic credentials
+    has_claude_sub = has_subscription_credentials()
+    claude_key_path = Path.home() / ".axion" / "credentials" / "anthropic.key"
+    has_claude_api = claude_key_path.exists() or bool(os.environ.get("ANTHROPIC_API_KEY"))
+
+    # OpenAI credentials
+    has_chatgpt_sub = has_openai_subscription_credentials()
+    chatgpt_plan = get_openai_subscription_plan() if has_chatgpt_sub else None
+    openai_key_path = Path.home() / ".axion" / "credentials" / "openai.key"
+    has_openai_api = openai_key_path.exists() or bool(os.environ.get("OPENAI_API_KEY"))
+
+    if arg in ("status", ""):
+        lines = ["[bold]Auth Status[/bold]", ""]
+
+        # Anthropic
+        lines.append("[bold #64ffda]Anthropic (Claude)[/bold #64ffda]")
+        if forced == "api":
+            lines.append("  Active: [yellow]API key[/yellow] (forced via AXION_AUTH_MODE=api)")
+        elif has_claude_sub:
+            lines.append("  Active: [green]Subscription (Pro/Max)[/green]")
+        elif has_claude_api:
+            lines.append("  Active: [cyan]API key[/cyan] (pay-per-token)")
+        else:
+            lines.append("  Active: [dim]not authenticated[/dim]")
+        lines.append(f"  Subscription: {'[green]yes[/green]' if has_claude_sub else '[dim]no[/dim]'}")
+        lines.append(f"  API key:      {'[green]yes[/green]' if has_claude_api else '[dim]no[/dim]'}")
+        lines.append("")
+
+        # OpenAI
+        lines.append("[bold #64ffda]OpenAI (Codex / ChatGPT)[/bold #64ffda]")
+        if forced == "api":
+            lines.append("  Active: [yellow]API key[/yellow] (forced via AXION_AUTH_MODE=api)")
+        elif has_chatgpt_sub:
+            plan_text = f"ChatGPT {chatgpt_plan}" if chatgpt_plan else "ChatGPT subscription"
+            lines.append(f"  Active: [green]{plan_text}[/green]")
+        elif has_openai_api:
+            lines.append("  Active: [cyan]API key[/cyan] (pay-per-token)")
+        else:
+            lines.append("  Active: [dim]not authenticated[/dim]")
+        lines.append(f"  Subscription: {'[green]yes[/green]' if has_chatgpt_sub else '[dim]no[/dim]'}")
+        lines.append(f"  API key:      {'[green]yes[/green]' if has_openai_api else '[dim]no[/dim]'}")
+        lines.append("")
+
+        lines.append("[dim]Switch:[/dim]")
+        lines.append("[dim]  /auth-mode subscription  — use subscriptions when present[/dim]")
+        lines.append("[dim]  /auth-mode api           — force API key billing[/dim]")
+        return "\n".join(lines)
+
+    if arg in ("subscription", "sub", "pro", "max"):
+        if not has_claude_sub and not has_chatgpt_sub:
+            return (
+                "[yellow]No subscriptions saved.[/yellow]\n"
+                "Run one of:\n"
+                "  [cyan]axion login --subscription[/cyan]                   (Claude Pro/Max)\n"
+                "  [cyan]axion login --subscription --provider openai[/cyan]  (ChatGPT Plus/Pro/Business)"
+            )
+        if "AXION_AUTH_MODE" in os.environ:
+            del os.environ["AXION_AUTH_MODE"]
+        rebuild_note = await _rebuild_provider_for_runtime(runtime)
+        active: list[str] = []
+        if has_claude_sub:
+            active.append("Claude Pro/Max")
+        if has_chatgpt_sub:
+            active.append(f"ChatGPT {chatgpt_plan or 'subscription'}")
+        msg = f"Subscription mode active for: [green]{', '.join(active)}[/green]."
+        if rebuild_note:
+            msg += "\n" + rebuild_note
+        return msg
+
+    if arg in ("api", "apikey", "api-key"):
+        os.environ["AXION_AUTH_MODE"] = "api"
+        rebuild_note = await _rebuild_provider_for_runtime(runtime)
+        msg = "Switched to [cyan]API key[/cyan] auth (both providers) and rebuilt the provider client."
+        if rebuild_note:
+            msg += "\n" + rebuild_note
+        return msg
+
+    return f"Unknown auth mode: {arg}. Use /auth-mode [status|subscription|api]"
+
+
+async def _list_models(runtime: ConversationRuntime) -> str:
+    """List models across providers based on which credentials are saved."""
+    from pathlib import Path as _P
+
+    cred_dir = _P.home() / ".axion" / "credentials"
+    sections: list[str] = []
+    current = runtime.model
+
+    def _line(name: str, alias: str = "", note: str = "") -> str:
+        marker = "[bold #00d4aa]●[/bold #00d4aa]" if name == current or alias == current else " "
+        bits = [f"  {marker} [bold]{name}[/bold]"]
+        if alias:
+            bits.append(f"[dim]({alias})[/dim]")
+        if note:
+            bits.append(f"[dim]— {note}[/dim]")
+        return " ".join(bits)
+
+    # Anthropic — Claude
+    has_subscription = (cred_dir / "anthropic-oauth.json").exists()
+    has_anthropic_key = (cred_dir / "anthropic.key").exists() or bool(os.environ.get("ANTHROPIC_API_KEY"))
+    if has_subscription or has_anthropic_key:
+        auth_note = "Pro/Max subscription" if has_subscription else "API key"
+        sections.append(f"[bold #64ffda]Anthropic[/bold #64ffda] [dim]({auth_note})[/dim]")
+        sections.append(_line("claude-opus-4-7", "opus"))
+        sections.append(_line("claude-sonnet-4-6", "sonnet"))
+        sections.append(_line("claude-haiku-4-5", "haiku"))
+        sections.append("")
+
+    # OpenAI (Chat Completions)
+    has_openai_key = (cred_dir / "openai.key").exists() or os.environ.get("OPENAI_API_KEY")
+    if has_openai_key:
+        sections.append(f"[bold #64ffda]OpenAI[/bold #64ffda] [dim](API key — Chat Completions)[/dim]")
+        sections.append(_line("gpt-5"))
+        sections.append(_line("gpt-4o"))
+        sections.append(_line("gpt-4o-mini"))
+        sections.append(_line("o3"))
+        sections.append(_line("o3-mini"))
+        sections.append(_line("o1"))
+        sections.append("")
+
+    # OpenAI Codex (Responses API). Show if user has either an OpenAI API key
+    # OR a ChatGPT subscription saved.
+    has_chatgpt_sub = (cred_dir / "openai-oauth.json").exists()
+    if has_openai_key or has_chatgpt_sub:
+        if has_chatgpt_sub:
+            try:
+                from axion.runtime.openai_subscription import get_openai_subscription_plan
+                plan = get_openai_subscription_plan() or "ChatGPT subscription"
+                badge = f"[dim](ChatGPT {plan} subscription)[/dim]"
+            except Exception:
+                badge = "[dim](ChatGPT subscription)[/dim]"
+        else:
+            badge = "[dim](API key — Responses API, agent-tuned for coding)[/dim]"
+        sections.append(f"[bold #64ffda]OpenAI Codex[/bold #64ffda] {badge}")
+        sections.append(_line("gpt-5-codex", "codex"))
+        sections.append(_line("gpt-5-codex-mini", "codex-mini"))
+        sections.append("")
+
+    # xAI
+    if (cred_dir / "xai.key").exists() or os.environ.get("XAI_API_KEY"):
+        sections.append(f"[bold #64ffda]xAI[/bold #64ffda] [dim](API key)[/dim]")
+        sections.append(_line("grok-2"))
+        sections.append("")
+
+    # Ollama (local) — best effort, don't crash if not installed
+    try:
+        from axion.api.ollama import OllamaClient
+        client = OllamaClient()
+        models = await client.list_models()
+        if models:
+            sections.append(f"[bold #64ffda]Ollama[/bold #64ffda] [dim](local)[/dim]")
+            for m in models:
+                size_str = ""
+                size_attr = getattr(m, "size", None)
+                if size_attr:
+                    size_str = f"{size_attr}" if isinstance(size_attr, str) else f"{int(size_attr) // (1024**3)}GB"
+                sections.append(_line(m.name, note=size_str))
+            sections.append("")
+    except Exception:
+        pass
+
+    if not sections:
+        return (
+            "No providers configured.\n\n"
+            "Set up one with:\n"
+            "  axion login                 (Anthropic — API key or Pro/Max)\n"
+            "  axion login --provider openai\n"
+            "  axion login --provider xai"
+        )
+
+    sections.insert(0, f"Current: [bold]{current}[/bold]\n")
+    sections.append("[dim]Switch with:  /model <name>[/dim]")
+    return "\n".join(sections)
+
+
+def _handle_image_command(
+    args: str, session: Session, runtime: ConversationRuntime
+) -> str:
+    """Handle /image — grab from clipboard or load from file path."""
+    from axion.runtime.image import (
+        grab_clipboard_image,
+        image_size_description,
+        is_image_path,
+        load_image_file,
+    )
+
+    image_data: tuple[str, str] | None = None
+    prompt_text = ""
+
+    if args.strip():
+        # Check if first arg is an image file path
+        parts = args.strip().split(maxsplit=1)
+        candidate = parts[0]
+        if is_image_path(candidate):
+            image_data = load_image_file(candidate)
+            prompt_text = parts[1] if len(parts) > 1 else "Describe this image."
+            if image_data is None:
+                return f"Failed to load image: {candidate}"
+        else:
+            # Treat entire args as prompt, grab from clipboard
+            prompt_text = args.strip()
+            image_data = grab_clipboard_image()
+            if image_data is None:
+                return "No image found on clipboard. Copy an image first, or use: /image path/to/file.png"
+    else:
+        # No args — grab from clipboard
+        image_data = grab_clipboard_image()
+        prompt_text = "What do you see in this image? Describe it and help me work with it."
+        if image_data is None:
+            return "No image on clipboard. Copy a screenshot first, or use: /image path/to/file.png [prompt]"
+
+    media_type, b64 = image_data
+    size_str = image_size_description(b64)
+    console.print(f"[dim]Attached image ({media_type}, {size_str})[/dim]")
+
+    # Store image in pending images for the next run_turn
+    if not hasattr(runtime, "_pending_images"):
+        runtime._pending_images = []  # type: ignore[attr-defined]
+    runtime._pending_images.append((media_type, b64))  # type: ignore[attr-defined]
+
+    return f"__RUN_TURN__:{prompt_text}"
+
+
+def _handle_inline_image(user_input: str, runtime: ConversationRuntime) -> str:
+    """Detect /image anywhere in the input (not just as a slash command).
+
+    If the user types "this looks generic /image" or "fix this /image path.png",
+    strip the /image part, grab the clipboard or file, and attach it.
+    Returns the cleaned text (without /image).
+    """
+    import re
+
+    # Match /image optionally followed by a file path
+    match = re.search(r'\s*/image\s*([\w./\\:-]*\.(?:png|jpg|jpeg|gif|webp|bmp))?\s*', user_input, re.IGNORECASE)
+    if not match:
+        return user_input
+
+    from axion.runtime.image import (
+        grab_clipboard_image,
+        image_size_description,
+        load_image_file,
+    )
+
+    file_arg = match.group(1)
+    image_data: tuple[str, str] | None = None
+
+    if file_arg:
+        image_data = load_image_file(file_arg)
+        if image_data is None:
+            console.print(f"[yellow]Could not load image: {file_arg}[/yellow]")
+    else:
+        image_data = grab_clipboard_image()
+        if image_data is None:
+            console.print("[yellow]No image on clipboard. Copy a screenshot first.[/yellow]")
+
+    if image_data:
+        media_type, b64 = image_data
+        size_str = image_size_description(b64)
+        console.print(f"[dim]Attached image ({media_type}, {size_str})[/dim]")
+
+        if not hasattr(runtime, "_pending_images"):
+            runtime._pending_images = []  # type: ignore[attr-defined]
+        runtime._pending_images.append((media_type, b64))  # type: ignore[attr-defined]
+
+    # Remove the /image part from the text
+    cleaned = user_input[:match.start()] + user_input[match.end():]
+    cleaned = cleaned.strip()
+
+    # If text is now empty, add a default prompt
+    if not cleaned:
+        cleaned = "What do you see in this image? Describe it and help me work with it."
+
+    return cleaned
+
+
+def _extract_image_paths(user_input: str) -> tuple[str, list[tuple[str, str]]]:
+    """Detect image file paths in user input and load them.
+
+    Returns (cleaned_input, list_of_(media_type, base64_data)).
+    Supports: screenshot.png, ./img.jpg, C:\\path\\to\\image.png, etc.
+    """
+    import re
+
+    from axion.runtime.image import (
+        image_size_description,
+        load_image_file,
+    )
+
+    images: list[tuple[str, str]] = []
+
+    # Match file paths that end with image extensions
+    pattern = r'(?:^|\s)((?:[A-Za-z]:\\|\.{0,2}[/\\])?[\w./\\-]+\.(?:png|jpg|jpeg|gif|webp|bmp))(?:\s|$)'
+    matches = re.findall(pattern, user_input, re.IGNORECASE)
+
+    for match in matches:
+        result = load_image_file(match)
+        if result:
+            media_type, b64 = result
+            images.append((media_type, b64))
+            size_str = image_size_description(b64)
+            console.print(f"[dim]Attached image: {match} ({media_type}, {size_str})[/dim]")
+
+    return user_input, images
 
 
 def _inject_file_context(user_input: str) -> str:
@@ -1175,6 +1595,10 @@ def _handle_resume_in_repl(args: str, session: Session, runtime: ConversationRun
 
     # Rebuild usage tracker from loaded messages
     runtime.usage_tracker = UsageTracker.from_session(session)
+
+    # Replay full conversation history
+    from axion.cli.tui import render_session_history
+    render_session_history(console, session.messages)
 
     return (
         f"Resumed session {session.session_id} "
@@ -1489,35 +1913,10 @@ async def run_repl(
             session = Session.load(path)
             console.print(f"[dim]Resumed session {session.session_id} ({session.message_count()} messages)[/dim]")
 
-            # Show last few messages as history preview
+            # Replay full conversation history so it feels like continuing
             if session.messages and output_format != "json":
-                console.print()
-                console.print("[bold]Recent conversation:[/bold]")
-                console.print("[dim]─────────────────────────────────────────[/dim]")
-                # Show last 6 messages (3 turns of user+assistant)
-                recent = session.messages[-6:]
-                for msg in recent:
-                    role = msg.role.value
-                    if role == "user":
-                        label = "[bold cyan]You:[/bold cyan]"
-                    elif role == "assistant":
-                        label = "[bold #64ffda]Axion:[/bold #64ffda]"
-                    else:
-                        continue
-                    # Get first text block
-                    text = ""
-                    for block in msg.blocks:
-                        if hasattr(block, "text"):
-                            text = block.text
-                            break
-                    if text:
-                        # Truncate long messages
-                        preview = text[:150].replace("\n", " ")
-                        if len(text) > 150:
-                            preview += "..."
-                        console.print(f"  {label} {preview}")
-                console.print("[dim]─────────────────────────────────────────[/dim]")
-                console.print()
+                from axion.cli.tui import render_session_history
+                render_session_history(console, session.messages)
         except Exception as exc:
             console.print(f"[red]Failed to load session: {exc}[/red]")
             return 1
@@ -1536,8 +1935,12 @@ async def run_repl(
         text_buffer.append(text)
         if output_format == "json":
             return
-        # Stream text live so the user sees progress immediately
-        console.print(text, end="", highlight=False)
+        # Buffer text until we hit a safe boundary (blank line / fence end),
+        # then render that chunk as Markdown so headers, bold, lists, code
+        # blocks, and tables all show with proper formatting.
+        rendered = repl_md_stream.push(renderer, text)
+        if rendered:
+            console.print(Markdown(rendered), end="")
 
     def on_tool_use_cb(tool_name: str, tool_input: str) -> None:
         """Show tool invocation in real-time as it happens."""
@@ -1547,18 +1950,18 @@ async def run_repl(
         remaining = repl_md_stream.flush(renderer)
         if remaining:
             console.print(Markdown(remaining))
-        # Parse input for panel display
+        # Parse input for inline display
         try:
             params = json.loads(tool_input) if tool_input else {}
         except (json.JSONDecodeError, TypeError):
             params = {"input": tool_input[:200]} if tool_input else {}
-        render_tool_panel(console, tool_name, params)
+        render_tool_call_inline(console, tool_name, params)
 
     def on_tool_result_cb(tool_name: str, output: str, is_error: bool) -> None:
         """Show tool result in real-time as it completes."""
         if output_format == "json":
             return
-        render_tool_result_panel(console, tool_name, output, is_error)
+        render_tool_result_inline(console, tool_name, output, is_error)
 
     thinking_started = [False]  # mutable flag for closure
 
@@ -1592,10 +1995,12 @@ async def run_repl(
     from axion.runtime.license import check_license_or_warn
     license_info = check_license_or_warn(console if output_format != "json" else None)
 
-    # Welcome screen with TUI
-    if output_format != "json":
+    # Welcome screen with TUI (skip on resume — history is shown instead)
+    if output_format != "json" and not resume:
         perm_display = runtime.permission_policy.mode.value
         branch = _git_branch()
+        auth_mode_label = _detect_auth_mode_label(runtime.model)
+
         render_welcome_screen(
             console,
             version=__version__,
@@ -1603,10 +2008,15 @@ async def run_repl(
             session_id=session.session_id,
             permission_mode=perm_display,
             git_branch=branch,
-            resumed=bool(resume),
+            resumed=False,
             message_count=session.message_count(),
             cwd=str(Path.cwd()),
+            auth_mode=auth_mode_label,
         )
+
+        # Friendly hint when a subscription is saved but the active model
+        # can't use it (e.g. ChatGPT subscription saved but on gpt-4o).
+        _maybe_warn_subscription_unused(runtime.model)
 
     # Input session with textarea styling
     input_session = InputSession(history_path=InputSession.default_history_path())
@@ -1718,23 +2128,41 @@ async def run_repl(
             # Expand @file references before sending to the model
             user_input = _inject_file_context(user_input)
 
-            try:
-                # Inject @file contents into the prompt
-                user_input = _inject_file_context(user_input)
+            # Inline /image — detect /image anywhere in input (not just as first word)
+            # e.g. "this looks generic /image" grabs clipboard + sends text
+            user_input = _handle_inline_image(user_input, runtime)
 
+            # Auto-detect image file paths in user input
+            user_input, auto_images = _extract_image_paths(user_input)
+            if auto_images:
+                if not hasattr(runtime, "_pending_images"):
+                    runtime._pending_images = []  # type: ignore[attr-defined]
+                runtime._pending_images.extend(auto_images)  # type: ignore[attr-defined]
+
+            try:
                 if output_format != "json":
                     console.print()  # Blank line before response
                     spinner.start("Thinking...")
 
-                summary = await runtime.run_turn(user_input)
+                # Collect any pending images (from /image command or auto-detect)
+                pending_imgs: list[tuple[str, str]] | None = None
+                if hasattr(runtime, "_pending_images") and runtime._pending_images:  # type: ignore[attr-defined]
+                    pending_imgs = list(runtime._pending_images)  # type: ignore[attr-defined]
+                    runtime._pending_images.clear()  # type: ignore[attr-defined]
+
+                summary = await runtime.run_turn(user_input, images=pending_imgs)
                 _stop_spinner()
 
                 if output_format == "json":
                     json_out = _build_json_output(summary, runtime.model)
                     click.echo(json.dumps(json_out))
                 else:
-                    # Text was already streamed live — just add a newline
-                    if text_buffer:
+                    # Flush any remaining buffered markdown so the final
+                    # paragraph / partial sentence renders before the prompt.
+                    remaining = repl_md_stream.flush(renderer)
+                    if remaining:
+                        console.print(Markdown(remaining))
+                    elif text_buffer:
                         console.print()  # Newline after streamed text
 
                     # Cost line with TUI styling
@@ -1748,25 +2176,18 @@ async def run_repl(
                         turn_cost = cost.total_cost_usd()
                         turn_tokens = summary.usage.total_tokens()
                         turn_num = runtime.usage_tracker.turn_count
-                        render_turn_cost(
-                            console,
-                            tokens=turn_tokens,
-                            cost=turn_cost,
-                            turn=turn_num,
-                        )
+                        # Detect auth mode for the bottom toolbar
+                        _auth_mode = _detect_auth_mode_label(runtime.model)
 
-                        # Update the bottom toolbar for next prompt
+                        # Update the bottom toolbar (live stats stay visible)
+                        # — no inline cost line; bottom toolbar already shows it
                         input_session.update_status(
                             model=runtime.model,
                             tokens=turn_tokens,
                             cost=turn_cost,
                             turn=turn_num,
+                            auth_mode=_auth_mode,
                         )
-
-                    # Visual separator between response and next input
-                    console.print(
-                        "[dim]─────────────────────────────────────────────────[/dim]"
-                    )
 
             except KeyboardInterrupt:
                 _stop_spinner()
@@ -1793,8 +2214,48 @@ async def run_repl(
                     console.print(f"[red]Authentication error: {error_msg}[/red]")
                     console.print("[dim]Check your API key or run axion login[/dim]")
                 elif "rate limit" in error_msg.lower() or "429" in error_msg:
-                    console.print(f"[yellow]Rate limited: {error_msg}[/yellow]")
-                    console.print("[dim]Wait a moment and try again, or switch to a different model with /model[/dim]")
+                    # Detect if user is on Claude subscription
+                    using_subscription = False
+                    try:
+                        from axion.runtime.claude_subscription import has_subscription_credentials
+                        using_subscription = (
+                            has_subscription_credentials()
+                            and runtime.model.startswith("claude")
+                            and os.environ.get("AXION_AUTH_MODE", "").lower() != "api"
+                        )
+                    except Exception:
+                        pass
+
+                    # Pull the retry hint our anthropic client embeds into the message
+                    # (format: "... — retry at HH:MM (in N min)")
+                    import re as _re
+                    retry_hint = ""
+                    m = _re.search(r"retry at \d{2}:\d{2} \([^)]+\)", error_msg)
+                    if m:
+                        retry_hint = m.group(0)
+
+                    if retry_hint:
+                        console.print(
+                            f"\n[yellow]Rate limit hit[/yellow] — [bold]{retry_hint}[/bold]"
+                        )
+                    else:
+                        console.print(f"\n[yellow]Rate limit hit (HTTP 429)[/yellow]")
+
+                    if using_subscription:
+                        console.print(
+                            "[dim]Your Claude Pro/Max plan limits messages per 5-hour window:[/dim]"
+                        )
+                        console.print("[dim]  • Pro:  ~45 messages / 5h[/dim]")
+                        console.print("[dim]  • Max:  ~225-900 messages / 5h (depending on tier)[/dim]")
+                        console.print()
+                        console.print("[dim]Options while you wait:[/dim]")
+                        console.print("[dim]  • Switch to API key billing: [bold]/auth-mode api[/bold][/dim]")
+                        console.print("[dim]  • Use a different provider: [bold]/model gpt-5[/bold] or [bold]/model grok-2[/bold][/dim]")
+                    else:
+                        console.print("[dim]The API is rate-limiting your requests. Options:[/dim]")
+                        if not retry_hint:
+                            console.print("[dim]  • Wait a moment and try again[/dim]")
+                        console.print("[dim]  • Switch model: [bold]/model gpt-5[/bold] or [bold]/model grok-2[/bold][/dim]")
                 elif "only supported in" in error_msg.lower() or "v1/responses" in error_msg.lower():
                     console.print(f"[yellow]Model not compatible: {runtime.model}[/yellow]")
                     console.print("[dim]This model requires a different API. Try /model gpt-5 or /model gpt-4.1 instead.[/dim]")
@@ -1833,8 +2294,113 @@ async def run_repl(
 # OAuth login/logout
 # ---------------------------------------------------------------------------
 
-async def _run_login(provider_name: str = "anthropic") -> int:
+async def _run_subscription_login() -> int:
+    """Paste-style OAuth login for Claude Pro/Max subscription users."""
+    from axion.runtime.claude_subscription import (
+        begin_subscription_login,
+        complete_subscription_login,
+        has_subscription_credentials,
+        logout_subscription,
+    )
+
+    console.print("[bold]Axion Code — Claude Subscription Login[/bold]\n")
+
+    if has_subscription_credentials():
+        console.print("[green]Already logged in with Claude Pro/Max subscription.[/green]")
+        console.print("[dim]Run 'axion logout' to clear and re-authenticate.[/dim]")
+        return 0
+
+    console.print("[dim]Requests will be billed against your Pro/Max plan, not the API.[/dim]\n")
+
+    auth_url, pkce, state = await begin_subscription_login()
+
+    console.print("[bold]Step 1.[/bold] Open this URL in your browser to log in:")
+    console.print()
+    console.print(f"  [link={auth_url}][cyan]{auth_url}[/cyan][/link]")
+    console.print()
+    console.print("[dim]Tip: it should have opened automatically.[/dim]")
+    console.print()
+    console.print("[bold]Step 2.[/bold] After authorizing, you'll see a page titled [bold]\"Authentication Code\"[/bold].")
+    console.print("           Click [cyan]Copy Code[/cyan] (or copy the long string in the box) and paste it below.")
+    console.print("           [dim]Don't paste the URL from your browser bar — paste the code from the page.[/dim]")
+    console.print()
+
+    try:
+        pasted = console.input("[cyan]Paste code: [/cyan]").strip()
+    except (EOFError, KeyboardInterrupt):
+        console.print("\n[dim]Cancelled.[/dim]")
+        return 1
+
+    if not pasted:
+        console.print("[yellow]No code entered.[/yellow]")
+        return 1
+
+    console.print("\n[dim]Exchanging code for tokens...[/dim]")
+    result = await complete_subscription_login(pasted, pkce, state)
+
+    if result.success:
+        console.print("\n[bold green]Logged in![/bold green]")
+        console.print("[dim]Tokens saved to ~/.axion/credentials/anthropic-oauth.json[/dim]")
+        console.print("\nRun [cyan]axion[/cyan] to start. Requests now use your subscription.")
+        return 0
+    else:
+        logout_subscription()
+        console.print(f"\n[red]Login failed:[/red] {result.error}")
+        console.print("[dim]Try again, or use API key login instead with: axion login[/dim]")
+        return 1
+
+
+async def _run_openai_subscription_login() -> int:
+    """Local-callback OAuth login for ChatGPT subscription (Codex models)."""
+    from axion.runtime.openai_subscription import (
+        get_openai_subscription_plan,
+        has_openai_subscription_credentials,
+        login_with_openai_subscription,
+        logout_openai_subscription,
+    )
+
+    console.print("[bold]Axion Code — ChatGPT Subscription Login[/bold]\n")
+
+    if has_openai_subscription_credentials():
+        plan = get_openai_subscription_plan() or "ChatGPT"
+        console.print(f"[green]Already logged in with {plan} subscription.[/green]")
+        console.print("[dim]Run 'axion logout --provider openai' to clear and re-auth.[/dim]")
+        return 0
+
+    console.print("[dim]This will open your browser to auth.openai.com.[/dim]")
+    console.print("[dim]Codex requests will then use your ChatGPT plan instead of API billing.[/dim]")
+    console.print("[dim]A local server runs briefly on port 1455 to receive the callback.[/dim]\n")
+
+    console.print("Opening browser...\n")
+    result = await login_with_openai_subscription()
+
+    if result.success:
+        plan_text = f" ({result.plan})" if result.plan else ""
+        console.print(f"\n[bold green]Logged in to ChatGPT{plan_text}![/bold green]")
+        console.print("[dim]Tokens saved to ~/.axion/credentials/openai-oauth.json[/dim]")
+        console.print(
+            "\nRun [cyan]axion -m codex[/cyan] (or [cyan]/model codex[/cyan]) to use Codex via your ChatGPT plan."
+        )
+        return 0
+    else:
+        logout_openai_subscription()
+        console.print(f"\n[red]Login failed:[/red] {result.error}")
+        console.print("[dim]Try again, or use an API key with [bold]axion login --provider openai[/bold].[/dim]")
+        return 1
+
+
+async def _run_login(provider_name: str = "anthropic", subscription: bool = False) -> int:
     """Log in by entering an API key (saved permanently) or via OAuth."""
+    if subscription:
+        if provider_name == "anthropic":
+            return await _run_subscription_login()
+        if provider_name == "openai":
+            return await _run_openai_subscription_login()
+        console.print(
+            f"[red]Subscription login is only available for Anthropic and OpenAI, not {provider_name}.[/red]"
+        )
+        return 1
+
     console.print("[bold]Axion Code Login[/bold]\n")
 
     # Check for existing saved key
@@ -1858,6 +2424,23 @@ async def _run_login(provider_name: str = "anthropic") -> int:
     if existing_env:
         console.print(f"[green]{env_var} is already set in your environment.[/green]")
         console.print("[dim]Want to save it permanently? Enter 'save' below, or enter a different key.[/dim]\n")
+
+    # For Anthropic, offer the subscription option as well
+    if provider_name == "anthropic" and not existing_env:
+        console.print("[bold]How do you want to use Claude?[/bold]\n")
+        console.print("  [cyan]1.[/cyan] Subscription (Claude Pro/Max) — uses your $20-200/mo plan")
+        console.print("       [dim]Best if you have a Claude subscription, no per-token billing[/dim]")
+        console.print("  [cyan]2.[/cyan] API key (pay-per-token)")
+        console.print("       [dim]Best for occasional use or if you don't have a subscription[/dim]")
+        console.print()
+        try:
+            choice = console.input("[cyan]Choose [1/2]: [/cyan]").strip()
+        except (EOFError, KeyboardInterrupt):
+            console.print("\n[dim]Cancelled.[/dim]")
+            return 1
+        if choice == "1":
+            return await _run_subscription_login()
+        # else fall through to API key flow
 
     # Provider-specific info
     provider_info = {
@@ -2176,17 +2759,41 @@ def system_prompt_cmd(ctx: click.Context, file_path: str | None) -> None:
 
 
 @cli.command()
-@click.option("--provider", default="anthropic", help="OAuth provider")
-def login(provider: str) -> None:
-    """Log in via OAuth or check API key status."""
-    exit_code = asyncio.run(_run_login(provider))
+@click.option("--provider", default="anthropic", help="Provider (anthropic, openai, xai)")
+@click.option("--subscription", is_flag=True, help="Log in with Claude Pro/Max subscription (OAuth)")
+def login(provider: str, subscription: bool) -> None:
+    """Log in via API key or Claude subscription OAuth."""
+    exit_code = asyncio.run(_run_login(provider, subscription=subscription))
     sys.exit(exit_code)
 
 
 @cli.command()
-@click.option("--provider", default="anthropic", help="OAuth provider")
+@click.option("--provider", default="anthropic", help="Provider (anthropic, openai, xai)")
 def logout(provider: str) -> None:
-    """Log out and clear stored credentials."""
+    """Log out and clear stored credentials (both API key and subscription)."""
+    # Also clear subscription credentials for the matching provider
+    if provider == "anthropic":
+        try:
+            from axion.runtime.claude_subscription import (
+                has_subscription_credentials,
+                logout_subscription,
+            )
+            if has_subscription_credentials():
+                logout_subscription()
+                console.print("[green]Cleared Claude subscription credentials.[/green]")
+        except Exception:
+            pass
+    elif provider == "openai":
+        try:
+            from axion.runtime.openai_subscription import (
+                has_openai_subscription_credentials,
+                logout_openai_subscription,
+            )
+            if has_openai_subscription_credentials():
+                logout_openai_subscription()
+                console.print("[green]Cleared ChatGPT subscription credentials.[/green]")
+        except Exception:
+            pass
     exit_code = _run_logout(provider)
     sys.exit(exit_code)
 

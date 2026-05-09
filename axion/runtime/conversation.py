@@ -63,6 +63,7 @@ from axion.runtime.permissions import (
 from axion.runtime.session import (
     ContentBlock,
     ConversationMessage,
+    ImageBlock,
     MessageRole,
     Session,
     SessionFork,
@@ -364,8 +365,17 @@ class ConversationRuntime:
 
     # -- Main turn loop ------------------------------------------------------
 
-    async def run_turn(self, user_input: str) -> TurnSummary:
+    async def run_turn(
+        self,
+        user_input: str,
+        images: list[tuple[str, str]] | None = None,
+    ) -> TurnSummary:
         """Execute a full model turn with tool loop.
+
+        Args:
+            user_input: The user's text input.
+            images: Optional list of (media_type, base64_data) tuples for
+                    image inputs (screenshots, pasted images).
 
         1. Send user message + history to model
         2. If model requests tools, execute them (with hooks) and loop
@@ -374,7 +384,18 @@ class ConversationRuntime:
         """
         self._trace("turn_started", {"user_input_length": len(user_input)})
 
-        self.session.push_user_text(user_input)
+        if images:
+            # Push a combined text+image user message
+            blocks: list[ContentBlock] = []
+            for media_type, b64_data in images:
+                blocks.append(ImageBlock(media_type=media_type, data=b64_data))
+            if user_input:
+                blocks.append(TextBlock(text=user_input))
+            self.session.push_message(
+                ConversationMessage(role=MessageRole.USER, blocks=blocks)
+            )
+        else:
+            self.session.push_user_text(user_input)
         summary = TurnSummary()
         iteration = 0
         cumulative_input_tokens = 0
@@ -640,160 +661,208 @@ class ConversationRuntime:
     async def _execute_tools_with_hooks(
         self, tool_uses: list[dict[str, Any]]
     ) -> list[ConversationMessage]:
-        """Execute tool calls with full pre/post hook integration."""
-        results: list[ConversationMessage] = []
+        """Execute tool calls with full pre/post hook integration.
+
+        Agent tool calls are executed in parallel via asyncio.gather for
+        better performance.  All other tools run sequentially to avoid
+        race conditions on shared state (filesystem, session, etc.).
+        """
+        import asyncio
+
+        # Separate parallelizable (Agent) calls from sequential ones
+        PARALLEL_TOOLS = {"Agent"}
+        parallel_batch: list[dict[str, Any]] = []
+        sequential_queue: list[dict[str, Any]] = []
 
         for tu in tool_uses:
-            tool_name = tu["name"]
-            tool_input = tu["input"]
-            tool_id = tu["id"]
+            if tu["name"] in PARALLEL_TOOLS:
+                parallel_batch.append(tu)
+            else:
+                sequential_queue.append(tu)
 
-            self._trace("tool_execution_started", {
-                "tool_name": tool_name,
-                "tool_use_id": tool_id,
-            })
+        results: list[ConversationMessage] = []
 
-            # ---- Phase 1: Pre-tool-use hooks ----
-            effective_input = tool_input
-            permission_override: PermissionOverride | None = None
+        # Execute sequential tools first (file ops, bash, etc.)
+        for tu in sequential_queue:
+            result_msg = await self._execute_single_tool(tu)
+            results.append(result_msg)
 
-            if self.hook_runner:
-                pre_result = await self.hook_runner.run_pre_tool_use(
-                    tool_name, tool_input
-                )
-
-                # Hook denied execution outright
-                if pre_result.denied:
-                    deny_reason = "; ".join(pre_result.messages) or "Denied by pre-tool-use hook"
-                    result_msg = self._make_tool_result(
-                        tool_id, tool_name, f"Hook denied: {deny_reason}", is_error=True
-                    )
-                    results.append(result_msg)
-                    self._trace("tool_execution_finished", {
-                        "tool_name": tool_name,
-                        "tool_use_id": tool_id,
-                        "outcome": "hook_denied",
-                    })
-                    continue
-
-                # Hook may have updated the input
-                if pre_result.updated_input is not None:
-                    effective_input = pre_result.updated_input
-                    logger.debug(
-                        "Pre-hook updated input for tool '%s'", tool_name
-                    )
-
-                # Hook may have set a permission override
-                if pre_result.permission_override is not None:
-                    try:
-                        permission_override = PermissionOverride(
-                            pre_result.permission_override
-                        )
-                    except ValueError:
-                        logger.warning(
-                            "Invalid permission_override from hook: %s",
-                            pre_result.permission_override,
-                        )
-
-            # ---- Phase 2: Permission check ----
-            permission_outcome = await self._resolve_permission(
-                tool_name, effective_input, permission_override
-            )
-            if isinstance(permission_outcome, PermissionDeny):
-                result_msg = self._make_tool_result(
-                    tool_id,
-                    tool_name,
-                    f"Permission denied: {permission_outcome.reason}",
-                    is_error=True,
-                )
+        # Execute parallel tools concurrently
+        if parallel_batch:
+            if len(parallel_batch) == 1:
+                result_msg = await self._execute_single_tool(parallel_batch[0])
                 results.append(result_msg)
+            else:
+                logger.info(
+                    "Executing %d Agent calls in parallel", len(parallel_batch)
+                )
+                parallel_results = await asyncio.gather(
+                    *(self._execute_single_tool(tu) for tu in parallel_batch),
+                    return_exceptions=True,
+                )
+                for i, res in enumerate(parallel_results):
+                    if isinstance(res, BaseException):
+                        tu_item = parallel_batch[i]
+                        err_msg = self._make_tool_result(
+                            tu_item["id"], tu_item["name"],
+                            f"Agent execution failed: {res}",
+                            is_error=True,
+                        )
+                        results.append(err_msg)
+                    elif isinstance(res, ConversationMessage):
+                        results.append(res)
+
+        return results
+
+    async def _execute_single_tool(
+        self, tu: dict[str, Any]
+    ) -> ConversationMessage:
+        """Execute a single tool call with full hook integration."""
+        tool_name = tu["name"]
+        tool_input = tu["input"]
+        tool_id = tu["id"]
+
+        self._trace("tool_execution_started", {
+            "tool_name": tool_name,
+            "tool_use_id": tool_id,
+        })
+
+        # ---- Phase 1: Pre-tool-use hooks ----
+        effective_input = tool_input
+        permission_override: PermissionOverride | None = None
+
+        if self.hook_runner:
+            pre_result = await self.hook_runner.run_pre_tool_use(
+                tool_name, tool_input
+            )
+
+            # Hook denied execution outright
+            if pre_result.denied:
+                deny_reason = "; ".join(pre_result.messages) or "Denied by pre-tool-use hook"
+                result_msg = self._make_tool_result(
+                    tool_id, tool_name, f"Hook denied: {deny_reason}", is_error=True
+                )
                 self._trace("tool_execution_finished", {
                     "tool_name": tool_name,
                     "tool_use_id": tool_id,
-                    "outcome": "permission_denied",
+                    "outcome": "hook_denied",
                 })
-                continue
+                return result_msg
 
-            # ---- Plan mode check: block write tools ----
-            if self.plan_mode_active:
-                from axion.runtime.plan_mode import get_plan_mode_denial_message, is_tool_allowed_in_plan_mode
-                if not is_tool_allowed_in_plan_mode(tool_name):
-                    result_msg = self._make_tool_result(
-                        tool_id, tool_name,
-                        get_plan_mode_denial_message(tool_name),
-                        is_error=True,
-                    )
-                    results.append(result_msg)
-                    continue
-
-            # ---- Phase 3: Execute tool ----
-            # Notify caller that tool is about to execute
-            if self.on_tool_use is not None:
-                try:
-                    self.on_tool_use(tool_name, effective_input)
-                except Exception:
-                    pass
-
-            if self.tool_executor is None:
-                output = f"No tool executor configured for '{tool_name}'"
-                is_error = True
-            else:
-                try:
-                    output = await self.tool_executor.execute(
-                        tool_name, effective_input
-                    )
-                    is_error = False
-                except Exception as exc:
-                    output = f"Tool error: {exc}"
-                    is_error = True
-                    logger.warning("Tool '%s' failed: %s", tool_name, exc)
-
-                    # ---- Phase 3b: Post-tool-use-failure hooks ----
-                    if self.hook_runner:
-                        fail_result = await self.hook_runner.run_post_tool_use_failure(
-                            tool_name, effective_input, str(exc)
-                        )
-                        if fail_result.messages:
-                            output = self._merge_hook_feedback(
-                                output, fail_result.messages
-                            )
-
-            # ---- Phase 4: Post-tool-use hooks (on success) ----
-            if not is_error and self.hook_runner:
-                post_result = await self.hook_runner.run_post_tool_use(
-                    tool_name, effective_input, output, is_error=False
+            # Hook may have updated the input
+            if pre_result.updated_input is not None:
+                effective_input = pre_result.updated_input
+                logger.debug(
+                    "Pre-hook updated input for tool '%s'", tool_name
                 )
 
-                # Post-hook can retroactively mark as error
-                if post_result.denied:
-                    is_error = True
-                    deny_reason = (
-                        "; ".join(post_result.messages)
-                        or "Retroactively denied by post-tool-use hook"
-                    )
-                    output = f"Post-hook error: {deny_reason}\nOriginal output: {output}"
-                elif post_result.messages:
-                    output = self._merge_hook_feedback(output, post_result.messages)
-
-            # Notify caller of tool result
-            if self.on_tool_result is not None:
+            # Hook may have set a permission override
+            if pre_result.permission_override is not None:
                 try:
-                    self.on_tool_result(tool_name, output, is_error)
-                except Exception:
-                    pass
+                    permission_override = PermissionOverride(
+                        pre_result.permission_override
+                    )
+                except ValueError:
+                    logger.warning(
+                        "Invalid permission_override from hook: %s",
+                        pre_result.permission_override,
+                    )
 
+        # ---- Phase 2: Permission check ----
+        permission_outcome = await self._resolve_permission(
+            tool_name, effective_input, permission_override
+        )
+        if isinstance(permission_outcome, PermissionDeny):
             result_msg = self._make_tool_result(
-                tool_id, tool_name, output, is_error=is_error
+                tool_id,
+                tool_name,
+                f"Permission denied: {permission_outcome.reason}",
+                is_error=True,
             )
-            results.append(result_msg)
-
             self._trace("tool_execution_finished", {
                 "tool_name": tool_name,
                 "tool_use_id": tool_id,
-                "outcome": "error" if is_error else "success",
+                "outcome": "permission_denied",
             })
+            return result_msg
 
-        return results
+        # ---- Plan mode check: block write tools ----
+        if self.plan_mode_active:
+            from axion.runtime.plan_mode import get_plan_mode_denial_message, is_tool_allowed_in_plan_mode
+            if not is_tool_allowed_in_plan_mode(tool_name):
+                return self._make_tool_result(
+                    tool_id, tool_name,
+                    get_plan_mode_denial_message(tool_name),
+                    is_error=True,
+                )
+
+        # ---- Phase 3: Execute tool ----
+        # Notify caller that tool is about to execute
+        if self.on_tool_use is not None:
+            try:
+                self.on_tool_use(tool_name, effective_input)
+            except Exception:
+                pass
+
+        if self.tool_executor is None:
+            output = f"No tool executor configured for '{tool_name}'"
+            is_error = True
+        else:
+            try:
+                output = await self.tool_executor.execute(
+                    tool_name, effective_input
+                )
+                is_error = False
+            except Exception as exc:
+                output = f"Tool error: {exc}"
+                is_error = True
+                logger.warning("Tool '%s' failed: %s", tool_name, exc)
+
+                # ---- Phase 3b: Post-tool-use-failure hooks ----
+                if self.hook_runner:
+                    fail_result = await self.hook_runner.run_post_tool_use_failure(
+                        tool_name, effective_input, str(exc)
+                    )
+                    if fail_result.messages:
+                        output = self._merge_hook_feedback(
+                            output, fail_result.messages
+                        )
+
+        # ---- Phase 4: Post-tool-use hooks (on success) ----
+        if not is_error and self.hook_runner:
+            post_result = await self.hook_runner.run_post_tool_use(
+                tool_name, effective_input, output, is_error=False
+            )
+
+            # Post-hook can retroactively mark as error
+            if post_result.denied:
+                is_error = True
+                deny_reason = (
+                    "; ".join(post_result.messages)
+                    or "Retroactively denied by post-tool-use hook"
+                )
+                output = f"Post-hook error: {deny_reason}\nOriginal output: {output}"
+            elif post_result.messages:
+                output = self._merge_hook_feedback(output, post_result.messages)
+
+        # Notify caller of tool result
+        if self.on_tool_result is not None:
+            try:
+                self.on_tool_result(tool_name, output, is_error)
+            except Exception:
+                pass
+
+        result_msg = self._make_tool_result(
+            tool_id, tool_name, output, is_error=is_error
+        )
+
+        self._trace("tool_execution_finished", {
+            "tool_name": tool_name,
+            "tool_use_id": tool_id,
+            "outcome": "error" if is_error else "success",
+        })
+
+        return result_msg
 
     # -- Permission resolution -----------------------------------------------
 
@@ -926,6 +995,7 @@ class ConversationRuntime:
     def _build_api_messages(self) -> list[InputMessage]:
         """Convert session messages to API input format."""
         from axion.api.types import (
+            ImageInputBlock,
             TextInputBlock,
             ToolResultTextContent,
             ToolUseInputBlock,
@@ -942,6 +1012,8 @@ class ConversationRuntime:
                 match block:
                     case TextBlock(text=text):
                         blocks.append(TextInputBlock(text=text))
+                    case ImageBlock(media_type=mt, data=data):
+                        blocks.append(ImageInputBlock(media_type=mt, data=data))
                     case ToolUseBlock(id=tid, name=name, input=inp):
                         try:
                             parsed = json.loads(inp) if inp else {}

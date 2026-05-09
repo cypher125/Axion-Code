@@ -181,11 +181,16 @@ def pricing_for_model(model: str | None) -> ModelPricing | None:
             input_cost_per_million=1.10, output_cost_per_million=4.40,
             cache_creation_cost_per_million=0.55, cache_read_cost_per_million=0.55,
         )
-    # Codex
+    # Codex (Responses API — agent-tuned coding models)
+    if "codex-mini" in normalized:
+        return ModelPricing(
+            input_cost_per_million=0.25, output_cost_per_million=2.0,
+            cache_creation_cost_per_million=0.125, cache_read_cost_per_million=0.025,
+        )
     if "codex" in normalized:
         return ModelPricing(
-            input_cost_per_million=1.50, output_cost_per_million=6.0,
-            cache_creation_cost_per_million=0.75, cache_read_cost_per_million=0.375,
+            input_cost_per_million=1.25, output_cost_per_million=10.0,
+            cache_creation_cost_per_million=0.625, cache_read_cost_per_million=0.125,
         )
     # xAI
     if "grok" in normalized:
