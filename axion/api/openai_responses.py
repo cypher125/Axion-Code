@@ -111,9 +111,9 @@ class OpenAiResponsesClient:
         if auth_mode != "api":
             try:
                 from axion.runtime.openai_subscription import (
+                    SUBSCRIPTION_PROVIDER,
                     has_openai_subscription_credentials,
                     load_oauth_credentials,
-                    SUBSCRIPTION_PROVIDER,
                 )
                 if has_openai_subscription_credentials():
                     creds = load_oauth_credentials(SUBSCRIPTION_PROVIDER)

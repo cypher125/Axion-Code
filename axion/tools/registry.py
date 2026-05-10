@@ -470,8 +470,9 @@ class BuiltinToolExecutor:
     @staticmethod
     async def _exec_web_fetch(params: dict[str, Any]) -> str:
         """Fetch content from a URL."""
-        import httpx
         import sys as _sys
+
+        import httpx
 
         url = params.get("url", "")
         if not url:
@@ -523,10 +524,9 @@ class BuiltinToolExecutor:
     async def _exec_web_search(params: dict[str, Any]) -> str:
         """Search the web using DuckDuckGo."""
         import re
+        import sys as _sys
 
         import httpx
-
-        import sys as _sys
 
         query = params.get("query", "")
         if not query:

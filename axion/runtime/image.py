@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import base64
 import logging
-import mimetypes
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -84,8 +83,9 @@ def _clipboard_win32() -> tuple[str, str] | None:
     """Grab clipboard image on Windows using win32clipboard or Pillow."""
     try:
         # Try Pillow's ImageGrab (most reliable on Windows)
-        from PIL import ImageGrab
         import io
+
+        from PIL import ImageGrab
 
         img = ImageGrab.grabclipboard()
         if img is None:
@@ -150,7 +150,7 @@ def _clipboard_macos() -> tuple[str, str] | None:
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
             tmp_path = tmp.name
 
-        result = subprocess.run(
+        subprocess.run(
             ["osascript", "-e",
              f'set fp to POSIX file "{tmp_path}"\n'
              f'try\n'

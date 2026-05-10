@@ -32,7 +32,13 @@ def test_prompt_builder_with_project_context():
     # On Windows, path may render with backslashes
     assert "test" in rendered
     assert "2026-04-07" in rendered
-    assert "new_file.txt" in rendered
+    # Branch line is summarized, but the full git status / diff is intentionally
+    # NOT dumped into the system prompt — that's the ~96% prompt-size reduction.
+    # The model can run `git status` itself when it needs details.
+    assert "## main" in rendered
+    assert "1 change" in rendered  # "Working tree has 1 change(s)..."
+    # The actual filename should NOT leak into the prompt
+    assert "new_file.txt" not in rendered
 
 
 def test_prompt_builder_with_output_style():

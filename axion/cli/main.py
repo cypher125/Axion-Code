@@ -41,10 +41,7 @@ from axion.cli.render import CLAW_THEME, MarkdownStreamState, TerminalRenderer
 from axion.cli.tui import (
     render_permission_panel,
     render_tool_call_inline,
-    render_tool_panel,
     render_tool_result_inline,
-    render_tool_result_panel,
-    render_turn_cost,
     render_welcome_screen,
 )
 from axion.commands.handlers.agents import handle_agents_command
@@ -1180,7 +1177,7 @@ async def _list_models(runtime: ConversationRuntime) -> str:
     # OpenAI (Chat Completions)
     has_openai_key = (cred_dir / "openai.key").exists() or os.environ.get("OPENAI_API_KEY")
     if has_openai_key:
-        sections.append(f"[bold #64ffda]OpenAI[/bold #64ffda] [dim](API key — Chat Completions)[/dim]")
+        sections.append("[bold #64ffda]OpenAI[/bold #64ffda] [dim](API key — Chat Completions)[/dim]")
         sections.append(_line("gpt-5"))
         sections.append(_line("gpt-4o"))
         sections.append(_line("gpt-4o-mini"))
@@ -1209,7 +1206,7 @@ async def _list_models(runtime: ConversationRuntime) -> str:
 
     # xAI
     if (cred_dir / "xai.key").exists() or os.environ.get("XAI_API_KEY"):
-        sections.append(f"[bold #64ffda]xAI[/bold #64ffda] [dim](API key)[/dim]")
+        sections.append("[bold #64ffda]xAI[/bold #64ffda] [dim](API key)[/dim]")
         sections.append(_line("grok-2"))
         sections.append("")
 
@@ -1219,7 +1216,7 @@ async def _list_models(runtime: ConversationRuntime) -> str:
         client = OllamaClient()
         models = await client.list_models()
         if models:
-            sections.append(f"[bold #64ffda]Ollama[/bold #64ffda] [dim](local)[/dim]")
+            sections.append("[bold #64ffda]Ollama[/bold #64ffda] [dim](local)[/dim]")
             for m in models:
                 size_str = ""
                 size_attr = getattr(m, "size", None)
@@ -2211,7 +2208,7 @@ async def run_repl(
                             f"\n[yellow]Rate limit hit[/yellow] — [bold]{retry_hint}[/bold]"
                         )
                     else:
-                        console.print(f"\n[yellow]Rate limit hit (HTTP 429)[/yellow]")
+                        console.print("\n[yellow]Rate limit hit (HTTP 429)[/yellow]")
 
                     if using_subscription:
                         console.print(

@@ -72,9 +72,9 @@ class AuthCredentials:
         if auth_mode != "api":
             try:
                 from axion.runtime.claude_subscription import (
+                    SUBSCRIPTION_PROVIDER,
                     has_subscription_credentials,
                     load_oauth_credentials,
-                    SUBSCRIPTION_PROVIDER,
                 )
                 if has_subscription_credentials():
                     creds = load_oauth_credentials(SUBSCRIPTION_PROVIDER)

@@ -103,7 +103,7 @@ def parse_pasted_code(pasted: str) -> tuple[str, str | None]:
 
     # If they pasted a full URL or query string, extract code & state
     if pasted.startswith(("http://", "https://", "?")):
-        from urllib.parse import urlparse, parse_qs
+        from urllib.parse import parse_qs, urlparse
 
         if pasted.startswith("?"):
             # Just a query string

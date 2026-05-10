@@ -416,7 +416,7 @@ def _summarize_tool_output(tool_name: str, output: str) -> str:
 
     if tool_name == "Bash":
         # First non-empty line + count if multi-line
-        lines = [l for l in output.splitlines() if l.strip()]
+        lines = [ln for ln in output.splitlines() if ln.strip()]
         first = lines[0][:120] if lines else "(no output)"
         return f"{first}" + (f"  [dim]({line_count} lines)[/dim]" if line_count > 1 else "")
     if tool_name == "Read":
@@ -673,8 +673,9 @@ def render_session_history(
     rendering that the live REPL uses, so resuming a session looks identical
     to scrolling up in the original conversation.
     """
-    from rich.markdown import Markdown
     import json as _json
+
+    from rich.markdown import Markdown
 
     if not messages:
         return
