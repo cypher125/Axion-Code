@@ -30,3 +30,6 @@ http_status_codes.md
 
 # PyPI build leftovers
 .release-notes-*.md
+
+# Personal launch notes (not part of the public repo)
+LAUNCH.md
