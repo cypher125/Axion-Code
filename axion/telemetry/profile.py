@@ -20,7 +20,7 @@ class ClientIdentity:
     """Application identity for API requests."""
 
     app_name: str = DEFAULT_APP_NAME
-    app_version: str = "1.0.0"
+    app_version: str = "1.0.1"
     runtime: str = DEFAULT_RUNTIME
 
     def user_agent(self) -> str:

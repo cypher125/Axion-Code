@@ -12,7 +12,7 @@ An autonomous AI coding assistant that runs in your terminal. Axion connects to 
 **Use your existing subscription.** Bring your **Claude Pro/Max** plan or **ChatGPT Plus/Pro/Business** plan instead of paying per-token. Axion authenticates via OAuth with the same flows the official Claude Code and OpenAI Codex CLIs use, so requests are billed against your existing plan. API keys still work too — pick whichever fits your usage.
 
 <p align="center">
-  <img src="assets/screenshots/welcome.png" alt="Axion welcome screen with Pro/Max subscription badge" width="900">
+  <img src="https://raw.githubusercontent.com/cypher125/Axion-Code/main/assets/screenshots/welcome.png" alt="Axion welcome screen with Pro/Max subscription badge" width="900">
 </p>
 
 ---
@@ -105,7 +105,7 @@ axion models       # or: /models inside the REPL
 Switching models mid-conversation is autocomplete-driven — type `/model ` and pick from the dropdown:
 
 <p align="center">
-  <img src="assets/screenshots/models.png" alt="Axion /model autocomplete dropdown showing all configured providers" width="900">
+  <img src="https://raw.githubusercontent.com/cypher125/Axion-Code/main/assets/screenshots/models.png" alt="Axion /model autocomplete dropdown showing all configured providers" width="900">
 </p>
 
 ### Subscription vs API Key
@@ -133,7 +133,7 @@ qwen2:7b · local                     ← Ollama (free, on-device)
 Run `/auth-mode status` inside the REPL to see exactly what's configured for both providers at once:
 
 <p align="center">
-  <img src="assets/screenshots/auth-status.png" alt="/auth-mode status showing both Anthropic Pro/Max subscription and OpenAI account configuration" width="900">
+  <img src="https://raw.githubusercontent.com/cypher125/Axion-Code/main/assets/screenshots/auth-status.png" alt="/auth-mode status showing both Anthropic Pro/Max subscription and OpenAI account configuration" width="900">
 </p>
 
 When the subscription is rate-limited, the error includes the exact retry time parsed from the `anthropic-ratelimit-*-reset` headers:
@@ -207,19 +207,19 @@ When the AI uses tools (reading files, running commands, editing), you see it ha
 **Multi-step turn — write a file, then run it:**
 
 <p align="center">
-  <img src="assets/screenshots/inline-tools.png" alt="Axion writing fizzbuzz.py and running it inline, showing Write + Bash tool calls with line-numbered output" width="900">
+  <img src="https://raw.githubusercontent.com/cypher125/Axion-Code/main/assets/screenshots/inline-tools.png" alt="Axion writing fizzbuzz.py and running it inline, showing Write + Bash tool calls with line-numbered output" width="900">
 </p>
 
 **Edit shows a real line-numbered diff** — red background for removals, green for additions, anchored to the actual line in the file:
 
 <p align="center">
-  <img src="assets/screenshots/edit-diff.png" alt="Axion editing fizzbuzz.py with line-numbered red/green diff highlighting" width="900">
+  <img src="https://raw.githubusercontent.com/cypher125/Axion-Code/main/assets/screenshots/edit-diff.png" alt="Axion editing fizzbuzz.py with line-numbered red/green diff highlighting" width="900">
 </p>
 
 **Write shows the new content with line numbers** and a `+N lines (ctrl+o to expand)` truncation marker for files over 14 lines:
 
 <p align="center">
-  <img src="assets/screenshots/streaming-markdown.png" alt="Axion writing http_status_codes.md with full content preview and line numbers" width="900">
+  <img src="https://raw.githubusercontent.com/cypher125/Axion-Code/main/assets/screenshots/streaming-markdown.png" alt="Axion writing http_status_codes.md with full content preview and line numbers" width="900">
 </p>
 
 `Bash` shows a one-line status that updates live as stderr/stdout streams in (`⠋ Building project...` → `⠹ Generating static pages (3/6)...` → result), so long `npm install` / `cargo build` runs don't freeze the screen. `Ctrl+C` cancels just the running command, not the whole session.
@@ -247,7 +247,7 @@ Supports `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.bmp` up to 5MB. Images are 
 Example — pasted a landing-page screenshot from clipboard, asked for UI fixes:
 
 <p align="center">
-  <img src="assets/screenshots/image-input.png" alt="Axion analyzing a screenshot pasted via /image and returning structured UI feedback" width="900">
+  <img src="https://raw.githubusercontent.com/cypher125/Axion-Code/main/assets/screenshots/image-input.png" alt="Axion analyzing a screenshot pasted via /image and returning structured UI feedback" width="900">
 </p>
 
 ### Interactive Permission Prompting

@@ -485,7 +485,7 @@ class BuiltinToolExecutor:
             async with httpx.AsyncClient(
                 timeout=30.0,
                 follow_redirects=True,
-                headers={"User-Agent": "Axion-Code/1.0.0"},
+                headers={"User-Agent": "Axion-Code/1.0.1"},
             ) as client:
                 response = await client.get(url)
                 content_type = response.headers.get("content-type", "")
@@ -540,7 +540,7 @@ class BuiltinToolExecutor:
                 timeout=15.0,
                 follow_redirects=True,
                 headers={
-                    "User-Agent": "Mozilla/5.0 (compatible; Axion-Code/1.0.0)",
+                    "User-Agent": "Mozilla/5.0 (compatible; Axion-Code/1.0.1)",
                 },
             ) as client:
                 # Use DuckDuckGo HTML lite (no API key required)
