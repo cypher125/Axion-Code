@@ -179,6 +179,10 @@ def create_key_bindings() -> KeyBindings:
 
 # Navy/Cyan terminal theme
 INPUT_STYLE = Style.from_dict({
+    # The empty-string selector matches text typed by the user (no other class).
+    # Light slate-blue makes user input visually distinct from response output,
+    # which uses the terminal's default foreground color.
+    "": "#ccd6f6",
     "prompt": "#00d4aa bold",                          # Teal prompt
     "bottom-toolbar": "bg:#0a192f fg:#8892b0",         # Navy bg, muted text
     "bottom-toolbar.text": "bg:#0a192f fg:#8892b0",

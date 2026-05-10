@@ -2052,6 +2052,7 @@ async def run_repl(
                 else:
                     if response:
                         console.print(f"[dim]{response}[/dim]")
+                    console.print()  # Blank line before next prompt for breathing room
                     # Persist session after commands that mutate state
                     try:
                         session.save()
@@ -2133,6 +2134,9 @@ async def run_repl(
                         console.print(Markdown(remaining))
                     elif text_buffer:
                         console.print()  # Newline after streamed text
+                    # Extra blank line before the next prompt so the response
+                    # and the next "axion >" don't crowd each other.
+                    console.print()
 
                     # Cost line with TUI styling
                     if summary.usage.total_tokens() > 0:
