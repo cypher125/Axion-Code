@@ -1,7 +1,6 @@
 # Axion-Code
 
 [![PyPI version](https://img.shields.io/pypi/v/axion-code.svg?color=00d4aa)](https://pypi.org/project/axion-code/)
-[![PyPI downloads](https://img.shields.io/pypi/dm/axion-code.svg?color=64ffda)](https://pypi.org/project/axion-code/)
 [![Python 3.11+](https://img.shields.io/pypi/pyversions/axion-code.svg)](https://pypi.org/project/axion-code/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
 [![CI](https://github.com/cypher125/Axion-Code/actions/workflows/ci.yml/badge.svg)](https://github.com/cypher125/Axion-Code/actions/workflows/ci.yml)
