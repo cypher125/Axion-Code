@@ -1933,6 +1933,10 @@ async def run_repl(
         remaining = repl_md_stream.flush(renderer)
         if remaining:
             console.print(Markdown(remaining))
+        # Blank line before each tool call so it stands apart from preceding
+        # model text or a previous tool's result line. Without this, tool
+        # blocks crash into surrounding text and the transcript reads packed.
+        console.print()
         # Parse input for inline display
         try:
             params = json.loads(tool_input) if tool_input else {}
@@ -1945,6 +1949,10 @@ async def run_repl(
         if output_format == "json":
             return
         render_tool_result_inline(console, tool_name, output, is_error)
+        # Blank line after the result so model text following the tool
+        # block has breathing room (e.g. "Let me try..." won't sit on the
+        # same visual band as the result line).
+        console.print()
 
     thinking_started = [False]  # mutable flag for closure
 
