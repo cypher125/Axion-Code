@@ -62,7 +62,6 @@ SLASH_COMMAND_SPECS: list[SlashCommandSpec] = [
     SlashCommandSpec(name="config", summary="Show loaded configuration", category="config"),
     SlashCommandSpec(name="init", summary="Create AXION.md for your project", category="config"),
     SlashCommandSpec(name="sandbox", summary="Show sandbox status", category="config"),
-    SlashCommandSpec(name="license", summary="Show license status and upgrade path", category="config"),
 
     # -- Tools & Plugins --
     SlashCommandSpec(name="mcp", summary="Manage MCP servers", argument_hint="[list|show|help]", category="tools"),
@@ -102,7 +101,6 @@ SLASH_COMMAND_SPECS: list[SlashCommandSpec] = [
     SlashCommandSpec(name="files", summary="List files referenced in this session", category="utility"),
     SlashCommandSpec(name="summary", summary="AI summarizes the conversation so far", category="utility"),
     SlashCommandSpec(name="stats", summary="Show detailed usage statistics", category="utility"),
-    SlashCommandSpec(name="upgrade", summary="Show upgrade path (Free → Pro → Team)", category="utility"),
 ]
 
 

@@ -845,11 +845,6 @@ async def _handle_slash_command(
     if cmd == "session":
         return _handle_session_command(args, session)
 
-    # --- License ---
-    if cmd == "license":
-        from axion.runtime.license import format_license_status, load_license
-        return format_license_status(load_license())
-
     # --- Commit ---
     if cmd == "commit":
         return handle_commit_command(args)
@@ -1034,15 +1029,6 @@ async def _handle_slash_command(
             "8. Path traversal\n\n"
             "Rate each finding as CRITICAL, HIGH, MEDIUM, or LOW."
         )
-
-    # --- Upgrade (tier upgrade) ---
-    if cmd == "upgrade":
-        from axion.runtime.license import get_upgrade_message, load_license
-        info = load_license()
-        msg = get_upgrade_message(info.tier)
-        if not msg:
-            return "You're on the highest tier. No upgrade available."
-        return f"Current plan: {info.tier}\n\n{msg}"
 
     if cmd == "image":
         return _handle_image_command(args, session, runtime)
@@ -1991,10 +1977,6 @@ async def run_repl(
     if resume:
         runtime.usage_tracker = UsageTracker.from_session(session)
 
-    # License check
-    from axion.runtime.license import check_license_or_warn
-    license_info = check_license_or_warn(console if output_format != "json" else None)
-
     # Welcome screen with TUI (skip on resume — history is shown instead)
     if output_format != "json" and not resume:
         perm_display = runtime.permission_policy.mode.value
@@ -2078,16 +2060,6 @@ async def run_repl(
                         session.save()
                     except Exception:
                         pass
-                    continue
-
-            # License: enforce turn limit for free tier
-            if not license_info.is_active:
-                turn_count = runtime.usage_tracker.turn_count
-                if turn_count >= license_info.max_turns:
-                    console.print(
-                        f"\n[yellow]Free tier limit reached ({license_info.max_turns} turns).[/yellow]"
-                        f"\n[dim]Run [bold]axion activate <key>[/bold] to unlock unlimited turns.[/dim]\n"
-                    )
                     continue
 
             # Send to model
@@ -2796,38 +2768,6 @@ def logout(provider: str) -> None:
             pass
     exit_code = _run_logout(provider)
     sys.exit(exit_code)
-
-
-@cli.command()
-@click.argument("license_key")
-def activate(license_key: str) -> None:
-    """Activate Axion with a license key."""
-    from axion.runtime.license import save_license, validate_license_key
-
-    info = validate_license_key(license_key)
-    if info.valid:
-        save_license(license_key)
-        console.print("\n[bold green]License activated![/bold green]")
-        console.print(f"  Tier: [bold]{info.tier}[/bold]")
-        if info.email:
-            console.print(f"  Email: {info.email}")
-        if info.expires_at:
-            from datetime import datetime
-            exp = datetime.fromtimestamp(info.expires_at).strftime("%Y-%m-%d")
-            console.print(f"  Expires: {exp}")
-        console.print("\n  All limits removed. Enjoy Axion!")
-    else:
-        console.print("\n[red]Invalid license key.[/red]")
-        console.print("  Check your key and try again.")
-        sys.exit(1)
-
-
-@cli.command()
-def deactivate() -> None:
-    """Remove stored license key."""
-    from axion.runtime.license import clear_license
-    clear_license()
-    console.print("[dim]License removed. Reverted to free tier.[/dim]")
 
 
 @cli.command()

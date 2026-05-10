@@ -152,7 +152,7 @@ Options while you wait:
 
 All tools are automatically sent to the model with every request, so the AI can read files, write code, run commands, and search the web without any manual setup.
 
-### Slash Commands (47)
+### Slash Commands (45)
 
 ```
 /help                  Show all commands
@@ -399,7 +399,7 @@ axion/
     error               Error hierarchy with retry classification
     client              ProviderClient factory with model-aware routing
   cli/           Terminal interface
-    main                REPL loop, 47 slash commands, session management, image detection
+    main                REPL loop, 45 slash commands, session management, image detection
     render              Streaming markdown renderer with safe-boundary buffering
     input               Tab completion, key bindings, bottom toolbar with auth badge
     tui                 Welcome screen, inline tool display, line-numbered diff renderer
@@ -426,7 +426,7 @@ axion/
     policy_engine       Condition combinators (And/Or/GreenAt), chained actions
     recovery            Failure recipes with async retry and escalation
   tools/         13 built-in tools + deferred schema loading (ToolSearch)
-  commands/      47 slash commands with argument parsing and fuzzy suggestions
+  commands/      45 slash commands with argument parsing and fuzzy suggestions
   plugins/       Plugin manifest validation, lifecycle execution, persistence
   telemetry/     Session tracing, JSONL/memory sinks, analytics events
   compat_harness/ Upstream manifest extraction
@@ -649,6 +649,19 @@ GitHub Actions runs on every push and PR:
 
 **Cyrus** — [osawayecyrus@gmail.com](mailto:osawayecyrus@gmail.com) — [@cypher125](https://github.com/cypher125)
 
+## Sponsoring
+
+Axion is **free and open source** (MIT). It will always stay that way for individual developers — no per-seat licenses, no paid tiers gating features, no usage caps.
+
+If Axion saves you time and you'd like to keep it healthy:
+
+- **Star the repo** — visibility is the cheapest way to help
+- **Sponsor** via [GitHub Sponsors](https://github.com/sponsors/cypher125) — covers maintenance time
+- **Contribute** — issues, PRs, and custom slash commands all welcome
+- **Tell people** — a tweet, a blog post, or a recommendation to a teammate goes a long way
+
+For companies adopting Axion at scale, a hosted/team product is on the roadmap (shared sessions, audit logs, SSO). [Email me](mailto:osawayecyrus@gmail.com) if that's interesting and we can chat early-access.
+
 ## License
 
-MIT
+[MIT](LICENSE) — do whatever you want, no warranty, attribution appreciated.
