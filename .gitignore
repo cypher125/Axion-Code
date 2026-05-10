@@ -15,6 +15,18 @@ venv/
 env/
 .env
 .claw/
+.axion/
 *.jsonl
 .coverage
 htmlcov/
+
+# Test artifacts and demo files (shouldn't be committed)
+test_file.txt
+test_coding.py
+test-2000-words.txt
+payment_apis_comparison*.txt
+fizzbuzz.py
+http_status_codes.md
+
+# PyPI build leftovers
+.release-notes-*.md
