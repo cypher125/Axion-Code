@@ -5,21 +5,25 @@ description = "Axion Code - Python AI coding assistant CLI"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
+license-files = ["LICENSE"]
 authors = [
     {name = "Cyrus", email = "osawayecyrus@gmail.com"},
 ]
-keywords = ["ai", "cli", "coding-assistant", "claude", "openai", "agent"]
+keywords = ["ai", "cli", "coding-assistant", "claude", "openai", "codex", "anthropic", "agent", "llm", "terminal"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 5 - Production/Stable",
     "Environment :: Console",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Topic :: Software Development",
     "Topic :: Software Development :: Code Generators",
+    "Topic :: Terminals",
+    "Topic :: Utilities",
     "Typing :: Typed",
 ]
 dependencies = [
@@ -58,7 +62,7 @@ build-backend = "hatchling.build"
 packages = ["axion"]
 
 [tool.hatch.build.targets.sdist]
-include = ["axion/", "tests/", "README.md", "pyproject.toml"]
+include = ["axion/", "tests/", "README.md", "LICENSE", "pyproject.toml"]
 
 [tool.ruff]
 target-version = "py311"
