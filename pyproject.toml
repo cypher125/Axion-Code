@@ -1,6 +1,6 @@
 [project]
 name = "axion-code"
-version = "0.1.0"
+version = "1.0.0"
 description = "Axion Code - Python AI coding assistant CLI"
 readme = "README.md"
 requires-python = ">=3.11"

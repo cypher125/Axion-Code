@@ -148,7 +148,7 @@ class AnthropicClient:
             "content-type": "application/json",
             "anthropic-version": DEFAULT_ANTHROPIC_VERSION,
             "anthropic-beta": ",".join(beta_parts),
-            "user-agent": "axion-code/0.1.0",
+            "user-agent": "axion-code/1.0.0",
         }
         if self.auth.api_key and not self.auth.bearer_token:
             # Use API key only when not using subscription

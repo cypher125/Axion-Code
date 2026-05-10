@@ -138,7 +138,7 @@ class McpServerConnection:
         _init_result = await self._send_request("initialize", {
             "protocolVersion": MCP_PROTOCOL_VERSION,
             "capabilities": {},
-            "clientInfo": {"name": "axion-code", "version": "0.1.0"},
+            "clientInfo": {"name": "axion-code", "version": "1.0.0"},
         })
 
         # Send initialized notification
