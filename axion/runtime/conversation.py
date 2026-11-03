@@ -14,12 +14,15 @@ The ConversationRuntime orchestrates the full model turn loop including:
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import json
 import logging
 import os
+import re
 import time
 from dataclasses import dataclass, field
-from typing import Any, Callable, Protocol, runtime_checkable
+from typing import Any, AsyncGenerator, AsyncIterator, Callable, Protocol, runtime_checkable
 
 from axion.api.client import (
     ProviderClient,
@@ -48,6 +51,7 @@ from axion.runtime.compact import (
     estimate_session_tokens,
 )
 from axion.runtime.hooks import HookRunner
+from axion.tools.registry import _cap_tool_result
 from axion.runtime.permissions import (
     TOOL_PERMISSION_REQUIREMENTS,
     PermissionAllow,
@@ -85,6 +89,26 @@ _CONTEXT_WINDOWS: dict[str, int] = {
     "claude-sonnet": 200_000,
     "claude-haiku": 200_000,
 }
+
+# Default context window when the model is unknown. A self-hosted model behind the custom provider
+# can be far smaller than a frontier model, so overriding this via AXION_COMPAT_CONTEXT_WINDOW is the
+# difference between compacting in time and overflowing the server's real limit.
+_DEFAULT_CONTEXT_WINDOW = 200_000
+
+
+def _context_window_for(resolved_model: str) -> int:
+    import os
+
+    env = os.environ.get("AXION_COMPAT_CONTEXT_WINDOW", "").strip()
+    if env:
+        try:
+            return int(env)
+        except ValueError:
+            pass
+    for prefix, window in _CONTEXT_WINDOWS.items():
+        if resolved_model.startswith(prefix):
+            return window
+    return _DEFAULT_CONTEXT_WINDOW
 
 
 # ---------------------------------------------------------------------------
@@ -172,6 +196,7 @@ class TurnSummary:
     prompt_cache_events: list[PromptCacheEvent] = field(default_factory=list)
     compaction_result: CompactionResult | None = None
     was_auto_compacted: bool = False
+    interrupted: bool = False  # the user stopped the turn mid-flight; partial output was preserved
 
 
 # ---------------------------------------------------------------------------
@@ -215,6 +240,61 @@ class ContextWindowExceededError(ConversationError):
     """Raised when estimated tokens exceed the model's context window."""
 
 
+# Yielded by _interruptible when the user asks to stop; consumers finalize partial output on seeing it.
+_INTERRUPT_SENTINEL = object()
+
+
+async def _interruptible(stream: AsyncIterator[Any], event: Any) -> AsyncGenerator[Any, None]:
+    """Yield from `stream`, but stop promptly (yielding _INTERRUPT_SENTINEL) if `event` is set.
+
+    Each next-item await is raced against the interrupt event, so a stop takes effect even while the
+    model is mid-generation, not only between chunks. Without this, an interrupt could not land until
+    the (possibly slow) next token arrived.
+    """
+    ait = stream.__aiter__()
+    try:
+        if event is None:
+            async for item in ait:
+                yield item
+            return
+        while True:
+            if event.is_set():
+                yield _INTERRUPT_SENTINEL
+                return
+            next_task = asyncio.ensure_future(ait.__anext__())
+            wait_task = asyncio.ensure_future(event.wait())
+            try:
+                done, _ = await asyncio.wait(
+                    {next_task, wait_task}, return_when=asyncio.FIRST_COMPLETED
+                )
+            except asyncio.CancelledError:
+                next_task.cancel()
+                wait_task.cancel()
+                raise
+            if next_task in done:
+                wait_task.cancel()
+                with contextlib.suppress(BaseException):
+                    await wait_task
+                try:
+                    item = next_task.result()
+                except StopAsyncIteration:
+                    return
+                yield item
+            else:
+                # Interrupt won the race; abandon the pending next-item fetch.
+                next_task.cancel()
+                with contextlib.suppress(BaseException):
+                    await next_task
+                yield _INTERRUPT_SENTINEL
+                return
+    finally:
+        # Close the underlying provider stream so it doesn't leak a pending task / warn on GC.
+        aclose = getattr(ait, "aclose", None)
+        if aclose is not None:
+            with contextlib.suppress(BaseException):
+                await aclose()
+
+
 # ---------------------------------------------------------------------------
 # Conversation runtime
 # ---------------------------------------------------------------------------
@@ -252,6 +332,20 @@ class ConversationRuntime:
     on_thinking: Callable[[str], None] | None = None  # (thinking_text)
     cost_budget_usd: float | None = None  # Max spend per session (None = unlimited)
     plan_mode_active: bool = False  # When True, only read-only tools allowed
+    # Called when the model presents a plan via ExitPlanMode; returns True to approve (and leave plan
+    # mode) or False to reject. If None (non-interactive), the plan is auto-approved.
+    on_plan_present: Callable[[str], bool] | None = None
+    # Set by the UI (e.g. on Ctrl-C) to stop the current turn cleanly, preserving partial output.
+    _interrupt_event: Any = field(default=None, repr=False, compare=False)
+
+    def request_interrupt(self) -> None:
+        """Ask the in-flight turn to stop at the next stream event, keeping its partial output."""
+        if self._interrupt_event is not None:
+            self._interrupt_event.set()
+
+    @property
+    def is_interrupted(self) -> bool:
+        return self._interrupt_event is not None and self._interrupt_event.is_set()
 
     # -- Builder helpers -----------------------------------------------------
 
@@ -333,34 +427,39 @@ class ConversationRuntime:
     # -- Preflight check -----------------------------------------------------
 
     def _preflight_check(self) -> None:
-        """Estimate token count and raise if it would exceed the model's context window.
+        """Ensure the next request fits the model's context window, compacting if needed.
 
-        Uses ~4 chars/token heuristic for the system prompt + messages.
+        Uses ~4 chars/token heuristic for the system prompt + messages. If the session would
+        overflow, it compacts the history first and only raises if it still does not fit (for
+        example a single tool result larger than the whole window).
         """
-        # Estimate system prompt tokens
+        resolved = resolve_model_alias(self.model)
+        context_window = _context_window_for(resolved)
+        output_tokens = max_tokens_for_model(resolved)
         system_tokens = len(self.system_prompt) // 4 if self.system_prompt else 0
 
-        # Estimate message tokens
-        message_tokens = estimate_session_tokens(self.session)
+        def estimated_total() -> int:
+            return system_tokens + estimate_session_tokens(self.session)
 
-        estimated_total = system_tokens + message_tokens
+        if estimated_total() + output_tokens <= context_window:
+            return
 
-        # Look up context window by model family prefix
-        resolved = resolve_model_alias(self.model)
-        context_window = 200_000  # default
-        for prefix, window in _CONTEXT_WINDOWS.items():
-            if resolved.startswith(prefix):
-                context_window = window
-                break
+        # Over budget: compact to a fraction of the window that leaves room for the reply, then
+        # re-check. compact_session preserves the most recent messages, so the live task survives.
+        target = max(1, int(context_window * 0.55) - system_tokens)
+        result = compact_session(self.session, CompactionConfig(max_tokens=target))
+        if result is not None:
+            self._trace("session_preflight_compacted", {
+                "tokens_before": result.estimated_tokens_before,
+                "tokens_after": result.estimated_tokens_after,
+                "removed_count": result.removed_count,
+            })
 
-        # Get max output tokens for the model
-        output_tokens = max_tokens_for_model(resolved)
-
-        if estimated_total + output_tokens > context_window:
+        if estimated_total() + output_tokens > context_window:
             raise ContextWindowExceededError(
-                f"Estimated {estimated_total} input tokens + {output_tokens} max output tokens "
-                f"= {estimated_total + output_tokens} exceeds context window of {context_window} "
-                f"for model {resolved}. Consider compacting the session."
+                f"Estimated {estimated_total()} input tokens + {output_tokens} max output tokens "
+                f"exceeds context window of {context_window} for model {resolved}, even after "
+                f"compaction. Reduce the size of the last message or tool output."
             )
 
     # -- Main turn loop ------------------------------------------------------
@@ -383,6 +482,8 @@ class ConversationRuntime:
         4. Return when model produces final text (end_turn)
         """
         self._trace("turn_started", {"user_input_length": len(user_input)})
+        # Fresh interrupt event per turn; request_interrupt() (from the UI on Ctrl-C) sets it.
+        self._interrupt_event = asyncio.Event()
 
         if images:
             # Push a combined text+image user message
@@ -406,15 +507,75 @@ class ConversationRuntime:
         try:
             api_messages = self._build_api_messages()
 
+            # Loop guard: stop the model flailing well before the hard max-iterations cap (which
+            # otherwise burns tokens/time on nothing). Three signals: the exact same call repeated
+            # (with volatile no-ops like `sleep N` normalized away, so retry-after-waiting counts as a
+            # repeat); a run of consecutive rounds that return only dead-end results; or a cumulative
+            # pile-up of tool results that carry no new information — empty/error, a duplicate of
+            # something already seen this turn, OR a definitively futile outcome (a 404, an unresolved
+            # host, a refused connection: waiting and retrying these never helps).
+            _call_counts: dict[str, int] = {}
+            _seen_results: set[str] = set()
+            _low_value = 0
+            _no_progress_streak = 0
+            _DEAD_OUTPUTS = {
+                "", "(no output)", "no files found", "no matches found",
+                "null", "none", "[]", "{}", "0", "exit code: 1",
+            }
+            # Substrings that mark a permanently-futile result: the URL/name is wrong or the network
+            # can't reach it. Retrying the identical request cannot change any of these.
+            _FUTILE_MARKERS = (
+                "404 not found", "403 forbidden", "429 too many requests", "rate limit",
+                "could not resolve host", "couldn't resolve host", "name or service not known",
+                "temporary failure in name resolution", "connection refused", "connection timed out",
+                "no such file or directory", "command not found", "no route to host",
+            )
+
+            def _norm_sig(name: str, tool_input: Any) -> str:
+                """Signature for repeat-detection, with volatile bits normalized out so that the same
+                command retried after a different `sleep` (or with collapsed whitespace) still matches."""
+                _t = str(tool_input).strip().lower()
+                _t = re.sub(r"\bsleep\s+\d+(\.\d+)?\s*;?\s*", "", _t)  # drop wait-then-retry prefixes
+                _t = re.sub(r"\s+", " ", _t)
+                return f"{name}\x00{_t}"
+
+            def _batch_low_value(messages: list[ConversationMessage]) -> tuple[int, int]:
+                """(low_value_results, total_results) for this batch. A result is low-value if it is an
+                error, empty/tiny, a known dead output, a duplicate, or a futile network/lookup failure."""
+                low = 0
+                total = 0
+                for _m in messages:
+                    for _b in _m.blocks:
+                        if isinstance(_b, ToolResultBlock):
+                            total += 1
+                            _s = _b.output.strip().lower()
+                            dup = _s in _seen_results
+                            _seen_results.add(_s)
+                            futile = any(_marker in _s for _marker in _FUTILE_MARKERS)
+                            if _b.is_error or len(_s) <= 2 or _s in _DEAD_OUTPUTS or dup or futile:
+                                low += 1
+                return low, total
+
             while iteration < self.max_iterations:
                 iteration += 1
                 summary.iterations = iteration
 
                 self._trace("assistant_iteration_started", {"iteration": iteration})
 
+                # Ctrl-C arrived between iterations: stop cleanly before the next model call.
+                if self.is_interrupted:
+                    summary.interrupted = True
+                    break
+
+                # Keep every send inside the context window. Tool results accumulated earlier in
+                # this same turn (e.g. several web fetches) can push the next request over the limit,
+                # so re-check and compact before each call, not just at the start of the turn.
+                self._preflight_check()
+                api_messages = self._build_api_messages()
+
                 # Pre-check budget before making an API call
                 if self.cost_budget_usd is not None and iteration > 1:
-                    current_cost = self.usage_tracker.total.estimate_cost_usd()
+                    current_cost = self._estimate_total_cost()
                     remaining = self.cost_budget_usd - current_cost.total_cost_usd()
                     if remaining <= 0:
                         summary.text_output += (
@@ -423,17 +584,24 @@ class ConversationRuntime:
                         )
                         break
 
-                # Stream one model response
+                # Stream one model response. If the stream drops mid-tool-call (leaving unparseable
+                # JSON), retry the request up to twice rather than executing a garbled call.
                 stream_result = await self._stream_model_response(api_messages)
+                _retries = 0
+                while stream_result.has_incomplete_tool_call and _retries < 2 and not self.is_interrupted:
+                    _retries += 1
+                    logger.warning("Incomplete tool call from a dropped stream; retrying (%d/2)", _retries)
+                    self.usage_tracker.record_turn(stream_result.usage)  # count the wasted call
+                    stream_result = await self._stream_model_response(api_messages)
 
                 # Accumulate usage
                 summary.usage += stream_result.usage
-                self.usage_tracker.record_turn(stream_result.usage)
+                self.usage_tracker.record_turn(stream_result.usage, model=resolve_model_alias(self.model))
                 cumulative_input_tokens += stream_result.usage.input_tokens
 
                 # Check cost budget — soft stop (don't crash, just stop looping)
                 if self.cost_budget_usd is not None:
-                    total_cost = self.usage_tracker.total.estimate_cost_usd()
+                    total_cost = self._estimate_total_cost()
                     if total_cost.total_cost_usd() >= self.cost_budget_usd:
                         logger.info(
                             "Cost budget reached: $%.4f >= $%.4f",
@@ -466,6 +634,12 @@ class ConversationRuntime:
                     "stop_reason": stream_result.stop_reason or "unknown",
                 })
 
+                # User interrupted mid-stream: the partial assistant text was already saved above; stop
+                # the turn cleanly, leaving the session well-formed so the next message can continue.
+                if stream_result.stop_reason == "interrupted":
+                    summary.interrupted = True
+                    break
+
                 # If no tool uses or stop_reason is end_turn, we're done
                 if not stream_result.tool_uses or stream_result.stop_reason == "end_turn":
                     break
@@ -477,6 +651,71 @@ class ConversationRuntime:
                 for trm in tool_result_messages:
                     self.session.push_message(trm)
                     summary.tool_results.append(trm)
+
+                # --- Loop guard: catch flailing before the hard iteration cap ---
+                _loop_reason: str | None = None
+                for _tu in stream_result.tool_uses:
+                    _sig = _norm_sig(_tu.get("name", ""), _tu.get("input", ""))
+                    _call_counts[_sig] = _call_counts.get(_sig, 0) + 1
+                    if _call_counts[_sig] >= 3:
+                        _loop_reason = (
+                            f"repeated the same {_tu.get('name', 'tool')} call "
+                            f"{_call_counts[_sig]}× with no new result"
+                        )
+                _low_batch, _total_batch = _batch_low_value(tool_result_messages)
+                _low_value += _low_batch
+                # A round where every tool result was dead-end makes no progress. A few of those in a
+                # row means the model is stuck — stop fast, regardless of how it varies the commands.
+                if _total_batch and _low_batch == _total_batch:
+                    _no_progress_streak += 1
+                else:
+                    _no_progress_streak = 0
+                if _loop_reason is None and _no_progress_streak >= 3:
+                    _loop_reason = (
+                        f"ran {_no_progress_streak} rounds in a row that returned only errors, "
+                        f"dead ends, or nothing new"
+                    )
+                if _loop_reason is None and _low_value >= 10:
+                    _loop_reason = f"made {_low_value} tool calls that returned nothing new"
+                if _loop_reason is not None:
+                    logger.warning("Loop guard stopped the turn: %s", _loop_reason)
+                    # Feed the correction back into the model's own context (appended to the last tool
+                    # result it saw) so its NEXT turn changes approach instead of repeating the command.
+                    guidance = (
+                        f"\n\n[loop guard] You {_loop_reason}. Repeating it will not help. A 404 / "
+                        f"'not found' means the URL or file name is WRONG (not that the site is down or "
+                        f"rate-limited) — find the correct one (search, or read the real release/listing "
+                        f"page) instead of retrying. An unresolved host or refused connection will not fix "
+                        f"itself by waiting, so do not sleep-and-retry. If a command's output was "
+                        f"redirected to a file (e.g. `> out.html`) you only saw the exit code — read that "
+                        f"file with the Read tool. Otherwise change your approach, or summarise what you "
+                        f"have and report. Do NOT run the same command again."
+                    )
+                    for _tm in reversed(tool_result_messages):
+                        _augmented = False
+                        _new_blocks: list[ContentBlock] = []
+                        for _b in _tm.blocks:
+                            if isinstance(_b, ToolResultBlock) and not _augmented:
+                                _new_blocks.append(ToolResultBlock(
+                                    tool_use_id=_b.tool_use_id, tool_name=_b.tool_name,
+                                    output=_b.output + guidance, is_error=_b.is_error))
+                                _augmented = True
+                            else:
+                                _new_blocks.append(_b)
+                        if _augmented:
+                            _tm.blocks = _new_blocks
+                            break
+                    summary.text_output += (
+                        f"\n\n[Rex stopped itself: it {_loop_reason}. Tell it what to do differently, "
+                        f"or ask it to summarise what it found so far.]"
+                    )
+                    break
+
+                # Stop promptly if the user hit Ctrl-C during tool execution (results are already
+                # saved above, so the session stays well-formed for the next message).
+                if self.is_interrupted:
+                    summary.interrupted = True
+                    break
 
                 # Auto-compaction check
                 compaction = self._maybe_auto_compact(cumulative_input_tokens)
@@ -499,10 +738,25 @@ class ConversationRuntime:
                 )
 
         except Exception as exc:
-            self._trace("turn_failed", {"error": str(exc)})
-            raise ConversationError(
-                f"Turn failed at iteration {iteration}: {exc}", cause=exc
-            ) from exc
+            # If the user asked to stop (Ctrl-C), a tool/stream unwinding mid-flight is expected —
+            # treat it as a clean interrupt and keep the partial turn, don't crash the REPL.
+            if self.is_interrupted:
+                self._trace("turn_interrupted", {"iteration": iteration, "error": str(exc)})
+                summary.interrupted = True
+                # Keep the session well-formed: drop a trailing assistant message whose tool_uses
+                # never got results (so the next request doesn't 400 on a dangling tool_use).
+                msgs = self.session.messages
+                if (
+                    msgs
+                    and msgs[-1].role == MessageRole.ASSISTANT
+                    and any(isinstance(b, ToolUseBlock) for b in msgs[-1].blocks)
+                ):
+                    msgs.pop()
+            else:
+                self._trace("turn_failed", {"error": str(exc)})
+                raise ConversationError(
+                    f"Turn failed at iteration {iteration}: {exc}", cause=exc
+                ) from exc
 
         self._trace("turn_completed", {
             "iterations": summary.iterations,
@@ -524,6 +778,7 @@ class ConversationRuntime:
         usage: TokenUsage = field(default_factory=TokenUsage)
         stop_reason: str | None = None
         prompt_cache_event: PromptCacheEvent | None = None
+        has_incomplete_tool_call: bool = False  # truncated stream left unparseable tool JSON
 
         @property
         def full_text(self) -> str:
@@ -572,7 +827,17 @@ class ConversationRuntime:
         current_tool_inputs: dict[int, list[str]] = {}
         current_tool_blocks: dict[int, dict[str, Any]] = {}
 
-        async for event in self.provider.stream_message(request):
+        stream = self.provider.stream_message(request)
+        interruptible = _interruptible(stream, self._interrupt_event)
+        async with contextlib.aclosing(interruptible) as events:
+          async for event in events:
+            # A user interrupt surfaces as a sentinel event; stop cleanly, keeping the partial text.
+            if event is _INTERRUPT_SENTINEL:
+                result.stop_reason = "interrupted"
+                # Drop any partially-streamed tool call (its JSON is incomplete); keep the text.
+                current_tool_blocks.clear()
+                current_tool_inputs.clear()
+                return result
             match event:
                 case MessageStartEvent(message=msg) if msg is not None:
                     result.usage.input_tokens = msg.usage.input_tokens
@@ -620,6 +885,12 @@ class ConversationRuntime:
 
                 case MessageDeltaEvent(delta=d, usage=u):
                     result.usage.output_tokens = u.output_tokens
+                    # OpenAI-compatible and Ollama servers report prompt tokens ONLY in the trailing
+                    # usage chunk (surfaced here), not in message_start. Without this the custom
+                    # provider (Rex's default) reports input_tokens=0, cumulative_input_tokens never
+                    # grows, and auto-compaction never fires — the root cause of context overflows.
+                    if u.input_tokens:
+                        result.usage.input_tokens = u.input_tokens
                     result.stop_reason = d.stop_reason
 
                 case MessageStopEvent():
@@ -627,9 +898,15 @@ class ConversationRuntime:
                         AssistantMessageStop(stop_reason=result.stop_reason)
                     )
 
-        # Assemble completed tool uses
+        # Assemble completed tool uses. Flag any whose accumulated arguments aren't valid JSON — a
+        # truncated stream leaves half-written JSON, and executing it would silently run a garbled call.
         for idx, block_info in current_tool_blocks.items():
             input_json = "".join(current_tool_inputs.get(idx, []))
+            if input_json.strip():
+                try:
+                    json.loads(input_json)
+                except json.JSONDecodeError:
+                    result.has_incomplete_tool_call = True
             tool_use = {
                 "id": block_info["id"],
                 "name": block_info["name"],
@@ -786,6 +1063,26 @@ class ConversationRuntime:
             })
             return result_msg
 
+        # ---- ExitPlanMode: present the plan, get approval, and (if approved) leave plan mode ----
+        if tool_name == "ExitPlanMode":
+            try:
+                plan = json.loads(effective_input).get("plan", "") if effective_input else ""
+            except (json.JSONDecodeError, AttributeError):
+                plan = effective_input or ""
+            approved = True if self.on_plan_present is None else bool(self.on_plan_present(plan))
+            if approved:
+                self.plan_mode_active = False
+                return self._make_tool_result(
+                    tool_id, tool_name,
+                    "Plan approved by the user. Plan mode is now OFF — implement the plan now.",
+                    is_error=False,
+                )
+            return self._make_tool_result(
+                tool_id, tool_name,
+                "The user did NOT approve the plan. Stay in plan mode; ask what they want changed.",
+                is_error=False,
+            )
+
         # ---- Plan mode check: block write tools ----
         if self.plan_mode_active:
             from axion.runtime.plan_mode import get_plan_mode_denial_message, is_tool_allowed_in_plan_mode
@@ -809,12 +1106,12 @@ class ConversationRuntime:
             is_error = True
         else:
             try:
-                output = await self.tool_executor.execute(
+                output = _cap_tool_result(await self.tool_executor.execute(
                     tool_name, effective_input
-                )
+                ))
                 is_error = False
             except Exception as exc:
-                output = f"Tool error: {exc}"
+                output = _cap_tool_result(f"Tool error: {exc}")
                 is_error = True
                 logger.warning("Tool '%s' failed: %s", tool_name, exc)
 
@@ -895,26 +1192,57 @@ class ConversationRuntime:
             and outcome.reason.startswith("__NEEDS_PROMPT__")
             and self.permission_prompter is not None
         ):
-            request = PermissionRequest(
-                tool_name=tool_name,
-                input_json=tool_input,
-                current_mode=self.permission_policy.mode,
-                required_mode=TOOL_PERMISSION_REQUIREMENTS.get(
-                    tool_name, PermissionMode.WORKSPACE_WRITE
-                ),
-                reason=f"Tool '{tool_name}' requires approval",
-            )
-            decision = await self.permission_prompter.decide(request)
-            if decision == PermissionPromptDecision.ALLOW:
-                # Cache the decision so we don't ask again for this tool
-                result = PermissionAllow()
-                self.permission_policy.remember_decision(tool_name, result)
-                return result
-            return PermissionDeny(reason=f"User denied '{tool_name}'")
+            # Serialize prompts so parallel tool calls (e.g. several Agent spawns fanned out in one
+            # turn) don't each ask: hold a lock, and re-check the cache inside it, so once the first
+            # "allow always" is remembered the others return the cached allow instead of prompting.
+            lock = getattr(self, "_perm_lock", None)
+            if lock is None:
+                lock = asyncio.Lock()
+                self._perm_lock = lock  # type: ignore[attr-defined]
+            async with lock:
+                cached = self.permission_policy.cached_decision(tool_name)
+                if cached is not None:
+                    return cached
+                request = PermissionRequest(
+                    tool_name=tool_name,
+                    input_json=tool_input,
+                    current_mode=self.permission_policy.mode,
+                    required_mode=TOOL_PERMISSION_REQUIREMENTS.get(
+                        tool_name, PermissionMode.WORKSPACE_WRITE
+                    ),
+                    reason=f"Tool '{tool_name}' requires approval",
+                )
+                decision = await self.permission_prompter.decide(request)
+                if decision in (
+                    PermissionPromptDecision.ALLOW,
+                    PermissionPromptDecision.ALLOW_ONCE,
+                    PermissionPromptDecision.ALLOW_ALWAYS,
+                ):
+                    result = PermissionAllow()
+                    # Only "allow always" is cached; "allow once" (and the legacy ALLOW alias) approves
+                    # just this single call so a one-time yes can't silently whitelist the tool forever.
+                    if decision == PermissionPromptDecision.ALLOW_ALWAYS:
+                        self.permission_policy.remember_decision(tool_name, result)
+                    return result
+                return PermissionDeny(reason=f"User denied '{tool_name}'")
 
         return outcome
 
     # -- Auto-compaction -----------------------------------------------------
+
+    def _estimate_total_cost(self):
+        """Estimate session cost using the ACTIVE model's pricing, not the Sonnet default.
+
+        The budget checks used estimate_cost_usd() (hardcoded Sonnet $3/$15), so a --budget on a
+        pricier model (e.g. Opus) under-enforced and overspent by the price ratio.
+        """
+        from axion.api.client import resolve_model_alias
+        from axion.runtime.usage import pricing_for_model
+
+        pricing = pricing_for_model(resolve_model_alias(self.model))
+        if pricing is not None:
+            return self.usage_tracker.total.estimate_cost_usd_with_pricing(pricing)
+        return self.usage_tracker.total.estimate_cost_usd()
 
     def _maybe_auto_compact(self, cumulative_input_tokens: int) -> CompactionResult | None:
         """Check if auto-compaction should trigger and perform it."""
