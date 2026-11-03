@@ -114,32 +114,46 @@ class McpServerConnection:
         self._tools: list[McpTool] = []
         self._resources: list[McpResource] = []
         self._read_task: asyncio.Task[None] | None = None
+        self._stderr_task: asyncio.Task[None] | None = None
 
     async def connect(self) -> None:
         """Start the MCP server process and initialize."""
         import os
+        import shutil
+        import sys as _sys
 
         env = {**os.environ, **(self.env or {})}
+        # Resolve the command for the platform. On Windows, launchers like `npx`/`npm` are `.cmd`
+        # scripts that CreateProcess can't execute directly, so run them through the shell.
+        exe = shutil.which(self.command) or self.command
+        argv: list[str]
+        if _sys.platform == "win32" and exe.lower().endswith((".cmd", ".bat")):
+            comspec = os.environ.get("COMSPEC", "cmd.exe")
+            argv = [comspec, "/c", exe, *self.args]
+        else:
+            argv = [exe, *self.args]
         self._process = await asyncio.create_subprocess_exec(
-            self.command,
-            *self.args,
+            *argv,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             env=env,
+            limit=10 * 1024 * 1024,  # allow large tool-list lines (default StreamReader limit is 64 KB)
         )
         self._reader = self._process.stdout
         self._writer = self._process.stdin
 
-        # Start reading responses
+        # Start reading responses, and drain stderr so a chatty server can't fill the OS pipe buffer
+        # (~64 KB) and deadlock.
         self._read_task = asyncio.create_task(self._read_loop())
+        self._stderr_task = asyncio.create_task(self._drain_stderr())
 
-        # Initialize
+        # Initialize. First run can be slow (npx may download the server + a browser), so allow more time.
         _init_result = await self._send_request("initialize", {
             "protocolVersion": MCP_PROTOCOL_VERSION,
             "capabilities": {},
             "clientInfo": {"name": "axion-code", "version": "1.0.1"},
-        })
+        }, timeout=180.0)
 
         # Send initialized notification
         await self._send_notification("notifications/initialized", {})
@@ -181,22 +195,35 @@ class McpServerConnection:
         return self._resources
 
     async def disconnect(self) -> None:
-        """Shutdown the MCP server."""
-        if self._read_task:
-            self._read_task.cancel()
+        """Shutdown the MCP server, awaiting cancelled tasks and closing the writer (no leaks)."""
+        for task in (self._read_task, getattr(self, "_stderr_task", None)):
+            if task is not None:
+                task.cancel()
+                try:
+                    await task
+                except (asyncio.CancelledError, Exception):
+                    pass
+        if self._writer is not None:
+            try:
+                self._writer.close()
+            except Exception:
+                pass
         if self._process:
             try:
                 self._process.terminate()
                 await asyncio.wait_for(self._process.wait(), timeout=5.0)
             except (asyncio.TimeoutError, ProcessLookupError):
-                self._process.kill()
+                try:
+                    self._process.kill()
+                except ProcessLookupError:
+                    pass
 
     def _next_id(self) -> int:
         self._request_id += 1
         return self._request_id
 
     async def _send_request(
-        self, method: str, params: dict[str, Any]
+        self, method: str, params: dict[str, Any], timeout: float = 30.0
     ) -> JsonRpcResponse | None:
         req_id = self._next_id()
         request = JsonRpcRequest(method=method, params=params, id=req_id)
@@ -207,7 +234,7 @@ class McpServerConnection:
         await self._write_message(request.to_dict())
 
         try:
-            return await asyncio.wait_for(future, timeout=30.0)
+            return await asyncio.wait_for(future, timeout=timeout)
         except asyncio.TimeoutError:
             self._pending.pop(req_id, None)
             logger.error("MCP request timed out: %s", method)
@@ -220,50 +247,48 @@ class McpServerConnection:
     async def _write_message(self, data: dict[str, Any]) -> None:
         if self._writer is None:
             return
-        content = json.dumps(data)
-        message = f"Content-Length: {len(content)}\r\n\r\n{content}"
-        self._writer.write(message.encode())
+        # MCP stdio transport is newline-delimited JSON-RPC (one JSON object per line), NOT the
+        # LSP-style Content-Length framing this used before — which no real MCP server understands,
+        # so initialize never completed and every server silently exposed zero tools.
+        line = json.dumps(data) + "\n"
+        self._writer.write(line.encode("utf-8"))
         await self._writer.drain()
 
-    async def _read_loop(self) -> None:
-        """Read JSON-RPC responses from the server."""
-        if self._reader is None:
+    async def _drain_stderr(self) -> None:
+        """Consume the server's stderr so its pipe buffer never fills and blocks the process."""
+        stderr = self._process.stderr if self._process else None
+        if stderr is None:
+            return
+        try:
+            while True:
+                line = await stderr.readline()
+                if not line:
+                    break
+                logger.debug("MCP server stderr: %s", line.decode("utf-8", errors="replace").rstrip())
+        except (asyncio.CancelledError, Exception):
             return
 
-        buffer = b""
+    async def _read_loop(self) -> None:
+        """Read newline-delimited JSON-RPC responses from the server."""
+        if self._reader is None:
+            return
         while True:
             try:
-                chunk = await self._reader.read(4096)
-                if not chunk:
+                raw = await self._reader.readline()
+                if not raw:
                     break
-                buffer += chunk
-
-                # Parse Content-Length header
-                while b"\r\n\r\n" in buffer:
-                    header_end = buffer.index(b"\r\n\r\n")
-                    header = buffer[:header_end].decode()
-                    content_length = 0
-                    for line in header.split("\r\n"):
-                        if line.lower().startswith("content-length:"):
-                            content_length = int(line.split(":")[1].strip())
-
-                    body_start = header_end + 4
-                    if len(buffer) < body_start + content_length:
-                        break  # Not enough data yet
-
-                    body = buffer[body_start:body_start + content_length].decode()
-                    buffer = buffer[body_start + content_length:]
-
-                    try:
-                        data = json.loads(body)
-                        response = JsonRpcResponse.from_dict(data)
-                        if response.id is not None and response.id in self._pending:
-                            future = self._pending.pop(response.id)
-                            if not future.done():
-                                future.set_result(response)
-                    except json.JSONDecodeError:
-                        logger.warning("Invalid JSON from MCP server")
-
+                raw = raw.strip()
+                if not raw:
+                    continue
+                try:
+                    data = json.loads(raw)
+                    response = JsonRpcResponse.from_dict(data)
+                    if response.id is not None and response.id in self._pending:
+                        future = self._pending.pop(response.id)
+                        if not future.done():
+                            future.set_result(response)
+                except json.JSONDecodeError:
+                    logger.warning("Invalid JSON line from MCP server: %s", raw[:200])
             except asyncio.CancelledError:
                 break
             except Exception as exc:

@@ -18,6 +18,7 @@ Comprehensive CLI with:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import os
@@ -30,14 +31,15 @@ from typing import Any
 
 import click
 from rich.console import Console
-from rich.markdown import Markdown
 
 from axion import __version__
 from axion.api.client import (
     ProviderClient,
     resolve_model_alias,
 )
-from axion.cli.render import CLAW_THEME, MarkdownStreamState, TerminalRenderer
+from axion.cli.brand import brand_prompt
+from axion.cli.render import CLAW_THEME, LiveStreamer, MarkdownStreamState, TerminalRenderer
+from axion.cli.render import CompactMarkdown as Markdown
 from axion.cli.tui import (
     render_permission_panel,
     render_tool_call_inline,
@@ -178,6 +180,14 @@ def _auto_detect_model() -> str:
 
     key_dir = _P.home() / ".axion" / "credentials"
 
+    # -1. Custom OpenAI-compatible endpoint. Setting AXION_COMPAT_BASE_URL is an explicit
+    # choice, so it wins over saved credentials for other providers.
+    if os.environ.get("AXION_COMPAT_BASE_URL") and (
+        os.environ.get("AXION_COMPAT_API_KEY") or (key_dir / "Custom.key").exists()
+    ):
+        from axion.api.client import custom_models
+        return custom_models()[0]
+
     # 0. Claude Pro/Max subscription (preferred)
     if (key_dir / "anthropic-oauth.json").exists():
         return "claude-sonnet-4-6"
@@ -232,6 +242,118 @@ def _list_sessions(cwd: Path | None = None, limit: int = MAX_SESSION_LIST) -> li
     d = _session_dir(cwd)
     files = sorted(d.glob("*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True)
     return files[:limit]
+
+
+_GREETING_WORDS = {
+    "hi", "hey", "hello", "yo", "sup", "hiya", "heya", "gm", "ok", "okay", "test",
+    "hi rex", "hey rex", "hello rex", "yo rex", "hi who are you", "who are you",
+    "what is this", "see", "what about this", "thanks", "cool", "nice",
+}
+
+
+def _looks_trivial(line: str) -> bool:
+    """A greeting or filler opener that says nothing about what the session is for."""
+    s = line.strip().rstrip("!.?,: ").lower()
+    if len(s) < 4:
+        return True
+    return s in _GREETING_WORDS
+
+
+def _first_meaningful_line(text: str) -> str:
+    """First line of a summary that carries real content (skips headings/labels/bullets)."""
+    import re
+    for raw in text.splitlines():
+        line = re.sub(r"^\s*(?:[#\-*>]+|\d+[.)])\s*", "", raw).strip()
+        if not line:
+            continue
+        if line.lower().rstrip(":") in {
+            "summary", "conversation summary", "session summary", "context", "overview",
+        }:
+            continue
+        return line
+    return ""
+
+
+def _truncate(text: str, max_len: int) -> str:
+    text = text.strip()
+    return text[:max_len] + ("…" if len(text) > max_len else "")
+
+
+def _session_title(path: Path, max_len: int = 60) -> str:
+    """A readable title for a session — what it's actually about, so you know which one to resume.
+
+    Order of preference: an explicit name set via /rename; else the first substantive user message
+    (greetings like "hi rex" are skipped); for a compacted session, the topic pulled from its summary
+    rather than the "[Session compacted…]" marker.
+    """
+    try:
+        from axion.runtime.session import MessageRole, TextBlock
+        session = Session.load(path)
+    except Exception:
+        return "(unreadable session)"
+
+    if session.title and session.title.strip():
+        return _truncate(session.title, max_len)
+
+    fallback: str | None = None
+    for m in session.messages:
+        if m.role != MessageRole.USER:
+            continue
+        for b in m.blocks:
+            if not isinstance(b, TextBlock) or not b.text.strip():
+                continue
+            text = b.text.strip()
+            # A compaction summary describes the whole session: title it by the summary, not the marker.
+            if text.startswith("[Session compacted"):
+                body = text.split("\n", 1)[1] if "\n" in text else ""
+                topic = _first_meaningful_line(body)
+                if not topic and session.compaction and session.compaction.summary:
+                    topic = _first_meaningful_line(session.compaction.summary)
+                if topic:
+                    return _truncate(topic, max_len)
+                continue
+            line = text.splitlines()[0]
+            if _looks_trivial(line):
+                if fallback is None:
+                    fallback = line  # remember the greeting in case nothing better shows up
+                continue
+            return _truncate(line, max_len)
+
+    if fallback:
+        return _truncate(fallback, max_len)
+    if session.compaction and session.compaction.summary:
+        topic = _first_meaningful_line(session.compaction.summary)
+        if topic:
+            return _truncate(topic, max_len)
+    return "(empty session)"
+
+
+def _pick_session_interactively(cwd: Path | None = None) -> Path | None:
+    """Show a numbered list of recent sessions with titles and let the user choose one."""
+    files = _list_sessions(cwd)
+    if not files:
+        console.print("[dim]No saved sessions.[/dim]")
+        return None
+    console.print("[bold]Recent sessions:[/bold]\n")
+    for i, f in enumerate(files, 1):
+        when = datetime.fromtimestamp(f.stat().st_mtime).strftime("%m-%d %H:%M")
+        console.print(f"  [cyan]{i:2}[/cyan]  [dim]{when}[/dim]  {_session_title(f)}")
+    console.print()
+    try:
+        choice = console.input("[bold]Pick a session number (or blank to cancel): [/]").strip()
+    except (EOFError, KeyboardInterrupt):
+        return None
+    if not choice:
+        return None
+    try:
+        idx = int(choice)
+    except ValueError:
+        console.print("[yellow]Not a number.[/yellow]")
+        return None
+    if 1 <= idx <= len(files):
+        return files[idx - 1]
+    console.print("[yellow]Out of range.[/yellow]")
+    return None
 
 
 
@@ -303,10 +425,10 @@ def _git_status_short() -> str | None:
 class CliPermissionPrompter:
     """Interactive permission prompter for the CLI REPL.
 
-    Shows tool details and asks [y/N/a] where:
-      y = allow this once
-      a = allow always (remember for this tool)
-      N = deny (default)
+    Shows tool details and a Claude Code-style arrow-key selector:
+      ❯ 1. Yes — allow once
+        2. Yes, and don't ask again for this tool
+        3. No — deny and tell the model what to do instead
 
     Implements the PermissionPrompter protocol.
     """
@@ -329,20 +451,29 @@ class CliPermissionPrompter:
             input_preview=request.input_json,
         )
 
-        try:
-            answer = console.input("[yellow]Allow? [y/N/a(lways)]: [/yellow]").strip().lower()
-        except (EOFError, KeyboardInterrupt):
-            console.print("[dim]Denied.[/dim]")
-            return PermissionPromptDecision.DENY
+        # Arrow-key / numeric selector — same UX as Claude Code.
+        from axion.cli.permission_ui import select_option
+        choice = await select_option(
+            question=f"Do you want to allow {request.tool_name} to run?",
+            options=[
+                "Yes — allow once",
+                f"Yes, and don't ask again for {request.tool_name}",
+                "No — and tell the model what to do instead",
+            ],
+            default=0,
+        )
 
-        if answer in ("y", "yes"):
-            console.print("[green]Allowed (once).[/green]")
-            return PermissionPromptDecision.ALLOW
-        if answer in ("a", "always"):
-            console.print("[green]Allowed (always for this tool).[/green]")
-            return PermissionPromptDecision.ALLOW
+        if choice == 0:
+            console.print("  [green]✓ Allowed (once)[/green]\n")
+            return PermissionPromptDecision.ALLOW_ONCE
+        if choice == 1:
+            console.print(
+                f"  [green]✓ Allowed always for {request.tool_name}[/green]\n"
+            )
+            return PermissionPromptDecision.ALLOW_ALWAYS
 
-        console.print("[dim]Denied.[/dim]")
+        # choice == 2 OR None (Esc/Ctrl+C) → deny
+        console.print("  [dim]✗ Denied[/dim]\n")
         return PermissionPromptDecision.DENY
 
 
@@ -421,6 +552,47 @@ def _build_json_output(summary: TurnSummary, model: str) -> dict[str, Any]:
         },
         "estimated_cost": cost.total_cost_usd(),
     }
+
+
+async def _setup_mcp(config: RuntimeConfig | None) -> tuple[Any, dict[str, tuple[str, str]]]:
+    """Connect configured MCP servers and register their tools so the model can call them.
+
+    Returns (manager, tool_map). tool_map routes a prefixed tool name (mcp__<server>__<tool>) to
+    (server_name, original_tool_name). Failures are reported and skipped, not fatal.
+    """
+    servers = config.feature_config.mcp_servers if config else {}
+    if not servers:
+        return None, {}
+    from axion.runtime.config import McpStdioServerConfig
+    from axion.runtime.mcp.stdio import McpServerManager
+    from axion.tools.registry import RuntimeToolDefinition, ToolSpec, get_tool_registry
+
+    manager = McpServerManager()
+    tool_map: dict[str, tuple[str, str]] = {}
+    registry = get_tool_registry()
+    for name, cfg in servers.items():
+        if not isinstance(cfg, McpStdioServerConfig):
+            console.print(f"[yellow]MCP '{name}': only stdio servers are supported for now — skipped.[/yellow]")
+            continue
+        try:
+            conn = await manager.connect(name, cfg.command, cfg.args, cfg.env)
+        except Exception as exc:
+            console.print(f"[yellow]MCP '{name}' failed to connect: {exc}[/yellow]")
+            continue
+        for tool in conn.tools:
+            prefixed = f"mcp__{name}__{tool.name}"
+            registry.register(RuntimeToolDefinition(
+                spec=ToolSpec(
+                    name=prefixed,
+                    description=(tool.description or f"{name} tool")[:1000],
+                    input_schema=tool.input_schema or {"type": "object"},
+                    required_permission="workspace-write",  # gated: prompts before running by default
+                ),
+                source=f"mcp:{name}",
+            ))
+            tool_map[prefixed] = (name, tool.name)
+        console.print(f"[dim]MCP '{name}': {len(conn.tools)} tool(s) available[/dim]")
+    return manager, tool_map
 
 
 def _load_config() -> RuntimeConfig:
@@ -558,23 +730,66 @@ def _build_runtime(
     # Build provider
     provider = ProviderClient.from_model(effective_model)
 
-    # Build system prompt (render to string, not list)
+    # Build system prompt (render to string, not list). A custom prompt file, from the
+    # --system-prompt flag or AXION_APPEND_SYSTEM_PROMPT_FILE, is appended as a trailing
+    # section so the built-in tool/permission instructions are preserved, not replaced.
     prompt_builder = SystemPromptBuilder.for_cwd()
+    append_file = os.environ.get("AXION_APPEND_SYSTEM_PROMPT_FILE")
+    if append_file:
+        try:
+            extra = Path(append_file).read_text(encoding="utf-8").strip()
+            if extra:
+                prompt_builder = prompt_builder.append_section(extra)
+        except OSError as exc:
+            logger.warning("Could not read AXION_APPEND_SYSTEM_PROMPT_FILE %s: %s", append_file, exc)
+    # Load persistent memory (what the agent has learned about the user across sessions) into the
+    # system prompt, so it actually reaches the model. AXION_MEMORY_DISABLED=1 turns this off.
+    if os.environ.get("AXION_MEMORY_DISABLED", "").strip() not in ("1", "true", "yes"):
+        try:
+            from axion.runtime.memory import MemoryStore
+
+            mem = MemoryStore().render_for_prompt()
+            if mem:
+                prompt_builder = prompt_builder.append_section(mem)
+        except Exception as exc:
+            logger.warning("Could not load persistent memory: %s", exc)
+    # List available skills so the model knows it can invoke them by name, and register each as a
+    # slash command so it shows up in /help and tab-completion.
+    try:
+        from axion.commands.registry import get_command_registry
+        from axion.runtime.skills import list_skills, render_skills_for_prompt
+
+        skills_section = render_skills_for_prompt(Path.cwd())
+        if skills_section:
+            prompt_builder = prompt_builder.append_section(skills_section)
+        _cmd_reg = get_command_registry()
+        for _sk in list_skills(Path.cwd()):
+            _cmd_reg.register_skill_command(_sk.name, _sk.description or "user skill")
+    except Exception as exc:
+        logger.warning("Could not load skills: %s", exc)
     system_prompt = prompt_builder.render()
 
-    # Build permission policy
+    # Build permission policy.
+    # The CLI default is now "prompt" so a fresh install is safe — destructive
+    # tools (Bash, Write, Edit) ask before running. Users who want yolo mode
+    # can pass --permission-mode allow or set "defaultMode": "bypassPermissions"
+    # in their settings.json.
     effective_perm = permission_mode
-    if effective_perm == "allow" and cfg.feature_config.permission_mode:
+    if effective_perm == "prompt" and cfg.feature_config.permission_mode:
         effective_perm = cfg.feature_config.permission_mode
 
-    # Map Claude Code-style permission modes to Axion's PermissionMode enum
-    # (allows shared settings.json files between Claude Code and Axion)
+    # Map Claude Code-style permission modes to Axion's PermissionMode enum.
+    # `dontAsk` used to map to `allow` (which silently green-lit everything),
+    # but that surprised users who didn't realise their Claude Code config
+    # disabled all confirmations. It now maps to `prompt` so destructive
+    # tools always ask. Users who really want fire-and-forget should set
+    # `bypassPermissions` explicitly.
     _CLAUDE_CODE_MODE_MAP = {
         "default": "prompt",
         "acceptEdits": "workspace-write",
         "plan": "read-only",
         "bypassPermissions": "danger-full-access",
-        "dontAsk": "allow",
+        "dontAsk": "prompt",
     }
     if effective_perm in _CLAUDE_CODE_MODE_MAP:
         effective_perm = _CLAUDE_CODE_MODE_MAP[effective_perm]
@@ -589,8 +804,8 @@ def _build_runtime(
         mode = PermissionMode.ALLOW
     policy = PermissionPolicy(mode=mode)
 
-    # Build tool executor
-    tool_executor = BuiltinToolExecutor(cwd=str(Path.cwd()))
+    # Build tool executor, telling it the active permission mode so spawned sub-agents inherit it.
+    tool_executor = BuiltinToolExecutor(cwd=str(Path.cwd()), permission_mode=mode.value)
 
     runtime = ConversationRuntime(
         session=session,
@@ -634,12 +849,23 @@ async def run_one_shot(
         if rendered:
             console.print(Markdown(rendered), end="")
 
+    # When spawned as a sub-agent, emit one-line progress to stderr so the parent can show live
+    # activity even though the final result is JSON on stdout.
+    _emit_progress = os.environ.get("AXION_EMIT_PROGRESS") == "1"
+
+    def on_tool_use(tool_name: str, tool_input: str) -> None:
+        if _emit_progress:
+            arg = (tool_input or "").replace("\n", " ")[:80]
+            sys.stderr.write(f"PROGRESS\t{tool_name}\t{arg}\n")
+            sys.stderr.flush()
+
     runtime, provider = _build_runtime(
         model=model,
         permission_mode=permission_mode,
         session=session,
         config=config,
         on_text_delta=on_text_delta,
+        on_tool_use=on_tool_use if _emit_progress else None,
     )
 
     try:
@@ -696,6 +922,29 @@ async def run_one_shot(
 # REPL slash command dispatcher
 # ---------------------------------------------------------------------------
 
+def _load_personas() -> dict[str, str]:
+    """Parse AXION_PERSONAS ('name=path;name=path') into {name: stripped file text}.
+
+    Rex sets this so the REPL can switch identities live (e.g. a professional 'normal' persona and a
+    ruthless-offense 'dark' persona). Empty/missing means no switchable personas are configured.
+    """
+    raw = os.environ.get("AXION_PERSONAS", "").strip()
+    out: dict[str, str] = {}
+    for pair in raw.split(";"):
+        pair = pair.strip()
+        if not pair or "=" not in pair:
+            continue
+        name, path = pair.split("=", 1)
+        name = name.strip().lower()
+        try:
+            text = Path(path.strip()).read_text(encoding="utf-8").strip()
+        except OSError:
+            continue
+        if name and text:
+            out[name] = text
+    return out
+
+
 async def _handle_slash_command(
     user_input: str,
     runtime: ConversationRuntime,
@@ -722,16 +971,54 @@ async def _handle_slash_command(
 
     # --- Help ---
     if cmd == "help":
+        target = args.strip().lstrip("/")
+        if target:
+            from axion.commands.parsing import render_help_detail
+            detail = render_help_detail(target)
+            return detail or f"No command '/{target}'. Type /help to list all commands."
         return render_help()
 
     # --- Clear ---
     if cmd == "clear":
         session.messages.clear()
-        return "Session cleared."
+        session.compaction = None
+        try:
+            from axion.runtime.usage import UsageTracker
+            runtime.usage_tracker = UsageTracker()
+        except Exception:
+            pass
+        return "Session cleared (history, usage, and compaction reset)."
 
     # --- Cost ---
     if cmd == "cost":
-        lines = runtime.usage_tracker.total.summary_lines("Session total", model=runtime.model)
+        from axion.runtime.usage import format_usd, pricing_for_model
+
+        tr = runtime.usage_tracker
+        t = tr.total
+        resolved = resolve_model_alias(runtime.model)
+        pricing = pricing_for_model(resolved)
+        cost = t.estimate_cost_usd_with_pricing(pricing) if pricing else t.estimate_cost_usd()
+        total_in = t.input_tokens + t.cache_read_input_tokens + t.cache_creation_input_tokens
+        hit = (t.cache_read_input_tokens / total_in * 100) if total_in else 0.0
+        cache_cost = cost.cache_creation_cost_usd + cost.cache_read_cost_usd
+        lines = [
+            f"Session cost — {tr.turn_count} turn(s)",
+            f"  tokens:  input {t.input_tokens:,}  output {t.output_tokens:,}  "
+            f"cache-write {t.cache_creation_input_tokens:,}  cache-read {t.cache_read_input_tokens:,}",
+            f"  cache:   {hit:.0f}% of input served from cache",
+            f"  cost:    input {format_usd(cost.input_cost_usd)}  output {format_usd(cost.output_cost_usd)}  "
+            f"cache {format_usd(cache_cost)}",
+            f"  TOTAL:   {format_usd(cost.total_cost_usd())}",
+        ]
+        # Per-model breakdown when more than one model was used this session.
+        if len(tr.by_model) > 1:
+            lines.append("  by model:")
+            for m, u in tr.by_model.items():
+                mp = pricing_for_model(m)
+                c = (u.estimate_cost_usd_with_pricing(mp) if mp else u.estimate_cost_usd()).total_cost_usd()
+                lines.append(f"    {m}: {u.total_tokens():,} tokens, {format_usd(c)}")
+        else:
+            lines[0] += f" — {resolved}"
         return "\n".join(lines)
 
     # --- Status ---
@@ -743,8 +1030,40 @@ async def _handle_slash_command(
         if args.strip():
             new_model = resolve_model_alias(args.strip())
             runtime.model = new_model
+            # Rebuild the provider client: switching model can switch provider/base-URL/key, and
+            # without this the requests kept going to the previous provider with the old credentials.
+            err = await _rebuild_provider_for_runtime(runtime)
+            if err:
+                return f"Model set to: {new_model}, but provider rebuild failed: {err}"
             return f"Model set to: {new_model}"
         return f"Current model: {runtime.model}"
+
+    # --- Persona (switch identity live: e.g. normal <-> dark) ---
+    if cmd == "persona":
+        personas = _load_personas()
+        if not personas:
+            return "No switchable personas are configured for this session."
+        # The active persona is whichever one's text is currently in the system prompt.
+        active = next((n for n, t in personas.items() if t and t in runtime.system_prompt), None)
+        target = args.strip().lower()
+        if not target:
+            names = ", ".join(sorted(personas))
+            return (
+                f"Current persona: {active or 'custom'}\n"
+                f"Available: {names}\n"
+                f"Switch with /persona <name>."
+            )
+        if target not in personas:
+            return f"Unknown persona '{target}'. Available: {', '.join(sorted(personas))}."
+        if target == active:
+            return f"Already using the '{target}' persona."
+        new_text = personas[target]
+        if active and personas[active] in runtime.system_prompt:
+            runtime.system_prompt = runtime.system_prompt.replace(personas[active], new_text)
+        else:
+            # No known persona text in the prompt (custom prompt?) — append so it still takes effect.
+            runtime.system_prompt = runtime.system_prompt.rstrip() + "\n\n" + new_text
+        return f"Switched to the '{target}' persona — it applies from your next message."
 
     # --- Models (list available) ---
     if cmd == "models":
@@ -755,12 +1074,22 @@ async def _handle_slash_command(
         tokens_before = estimate_session_tokens(session)
         compaction_config = CompactionConfig()
         if args.strip():
+            # Explicit target: compact so the estimate drops below this many tokens.
             try:
                 compaction_config.max_tokens = int(args.strip())
             except ValueError:
                 return "Usage: /compact [max_tokens]"
+        else:
+            # No argument: the user asked to compact NOW. The default 100k threshold never fires on
+            # a small self-hosted context window, so target ~45% of the model's real window instead,
+            # which always reduces history (down to the most recent messages) when there is any to cut.
+            from axion.runtime.conversation import _context_window_for
+            window = _context_window_for(resolve_model_alias(runtime.model))
+            compaction_config.max_tokens = max(1, int(window * 0.45))
         cr = compact_session(session, compaction_config)
         if cr is None:
+            if len(session.messages) <= compaction_config.preserve_recent_messages:
+                return f"Nothing to compact yet: only {len(session.messages)} messages in the session."
             return f"No compaction needed (estimated {tokens_before} tokens)."
         return (
             f"Compacted: removed {cr.removed_count} messages, "
@@ -798,6 +1127,10 @@ async def _handle_slash_command(
     # --- Agents ---
     if cmd == "agents":
         return handle_agents_command(args)
+
+    # --- Review (self-review of uncommitted changes) ---
+    if cmd == "review":
+        return await _handle_review_command(args, runtime)
 
     # --- Memory ---
     if cmd == "memory":
@@ -846,9 +1179,26 @@ async def _handle_slash_command(
     if cmd == "commit":
         return handle_commit_command(args)
 
-    # --- Undo ---
+    # --- Undo (git) ---
     if cmd == "undo":
         return handle_undo_command(args)
+
+    # --- Rewind (conversation) ---
+    if cmd == "rewind":
+        n = 1
+        if args.strip():
+            try:
+                n = max(1, int(args.strip()))
+            except ValueError:
+                return "Usage: /rewind [N]  — drop the last N user turns (default 1)."
+        removed = _rewind_session(session, n)
+        if removed == 0:
+            return "Nothing to rewind."
+        try:
+            session.save()
+        except Exception:
+            pass
+        return f"Rewound {n} turn(s): removed {removed} message(s). You're back to before that point — retry or rephrase."
 
     # --- Review ---
     if cmd == "review":
@@ -882,8 +1232,9 @@ async def _handle_slash_command(
 
     # --- Context (token usage) ---
     if cmd == "context":
+        from axion.runtime.conversation import _context_window_for
         tokens = estimate_session_tokens(session)
-        model_window = 200_000  # Default
+        model_window = _context_window_for(resolve_model_alias(runtime.model))
         pct = (tokens / model_window * 100) if model_window > 0 else 0
         bar_len = int(pct / 2)  # 50 chars max
         bar = "█" * bar_len + "░" * (50 - bar_len)
@@ -957,11 +1308,13 @@ async def _handle_slash_command(
     if cmd == "rename":
         new_name = args.strip()
         if not new_name:
-            return "Usage: /rename <new_session_name>"
-        old_id = session.session_id
-        session.session_id = new_name
-        session.with_persistence_path(_session_path_for_id(new_name))
-        return f"Session renamed: {old_id} → {new_name}"
+            return "Usage: /rename <name> — sets a readable title shown in the resume picker"
+        session.title = new_name
+        try:
+            session.save()
+        except Exception:
+            pass
+        return f"Session titled: {new_name}"
 
     # --- Files ---
     if cmd == "files":
@@ -1033,7 +1386,18 @@ async def _handle_slash_command(
     if cmd == "auth-mode" or cmd == "auth":
         return await _handle_auth_mode_command(args, runtime)
 
-    return f"Command /{cmd} recognized but has no handler yet."
+    # A /<name> that matches a skill file runs that skill as a turn (args substituted into its body).
+    try:
+        from axion.runtime.skills import execute_skill, load_skill, resolve_skill
+
+        skill_path = resolve_skill(cmd, Path.cwd())
+        if skill_path is not None:
+            expanded = execute_skill(load_skill(skill_path), args.strip())
+            return "__RUN_TURN__:" + expanded
+    except Exception as exc:
+        logger.warning("Skill '%s' failed to run: %s", cmd, exc)
+
+    return f"Command /{cmd} is not a known command or skill. Create a skill at .axion/skills/{cmd}.md, or /help."
 
 
 async def _rebuild_provider_for_runtime(runtime: ConversationRuntime) -> str:
@@ -1420,8 +1784,14 @@ def _inject_file_context(user_input: str) -> str:
     if not context_parts:
         return user_input
 
-    # Prepend context to the user message
+    # Cap total injected context so several big @files can't overflow a small context window.
     context = "\n\n".join(context_parts)
+    try:
+        cap = int(os.environ.get("AXION_MAX_TOOL_RESULT_CHARS", "") or 24000)
+    except ValueError:
+        cap = 24000
+    if cap > 0 and len(context) > cap:
+        context = context[:cap] + "\n... (@file context truncated)"
     return f"{context}\n\n{clean_input}"
 
 
@@ -1510,33 +1880,111 @@ def _format_config(config: RuntimeConfig) -> str:
     return "\n".join(lines)
 
 
+def _rewind_session(session: Session, n: int = 1) -> int:
+    """Remove the last N user turns (a user text message and everything after it) from the session.
+
+    Lets you jump back to a known-good point when a turn went wrong, then retry. Tool-result messages
+    (also role USER) are not turn starts; only genuine user-input messages are.
+    """
+    from axion.runtime.session import MessageRole, TextBlock, ToolResultBlock
+
+    starts = [
+        i for i, m in enumerate(session.messages)
+        if m.role == MessageRole.USER
+        and any(isinstance(b, TextBlock) for b in m.blocks)
+        and not any(isinstance(b, ToolResultBlock) for b in m.blocks)
+    ]
+    if not starts:
+        return 0
+    n = min(n, len(starts))
+    cut = starts[-n]
+    removed = len(session.messages) - cut
+    session.messages = session.messages[:cut]
+    return removed
+
+
+async def _handle_review_command(args: str, runtime: ConversationRuntime) -> str:
+    """Have the model review the working tree's uncommitted changes for correctness (self-review)."""
+    from axion.api.client import max_tokens_for_model, resolve_model_alias
+    from axion.api.types import InputMessage, MessageRequest, TextInputBlock
+    from axion.runtime.git import git_diff
+
+    cwd = Path.cwd()
+    try:
+        diff = (git_diff(cwd, staged=False) or "") + "\n" + (git_diff(cwd, staged=True) or "")
+    except Exception as exc:
+        return f"Could not read a git diff (is this a git repo?): {exc}"
+    diff = diff.strip()
+    if not diff:
+        return "No uncommitted changes to review."
+    if len(diff) > 24_000:
+        diff = diff[:24_000] + "\n... (diff truncated for review)"
+
+    prompt = (
+        "Review the following uncommitted diff for correctness. Look for real bugs, broken logic, "
+        "missed edge cases, security issues, and anything that won't do what was intended. Be specific "
+        "and concise: list concrete problems (with file:line where visible) or say 'No issues found.' "
+        "Do not restate the diff.\n\n"
+        + diff
+    )
+    resolved = resolve_model_alias(runtime.model)
+    req = MessageRequest(
+        model=resolved,
+        max_tokens=min(2048, max_tokens_for_model(resolved)),
+        messages=[InputMessage(role="user", content=[TextInputBlock(text=prompt)])],
+        system="You are a rigorous, skeptical code reviewer. Report only real problems.",
+        stream=False,
+    )
+    try:
+        resp = await runtime.provider.send_message(req)
+    except Exception as exc:
+        return f"Review failed: {exc}"
+    text = "".join(getattr(b, "text", "") for b in resp.content).strip()
+    return f"Self-review of uncommitted changes:\n\n{text}" if text else "(no review returned)"
+
+
 def _handle_memory_command(args: str) -> str:
-    """Handle /memory command for managing CLAUDE.md."""
+    """Manage persistent memory (durable facts that load into every session) and project CLAUDE.md.
+
+    /memory                list saved memories
+    /memory add <text>     save a new memory
+    /memory remove <name>  delete a memory
+    /memory project        show the project CLAUDE.md
+    """
+    from axion.runtime.memory import MemoryStore
+
     parts = args.strip().split(maxsplit=1)
-    action = parts[0].lower() if parts else "show"
+    action = parts[0].lower() if parts else "list"
+    store = MemoryStore()
 
-    claude_md = Path.cwd() / "CLAUDE.md"
-
-    if action == "show":
-        if not claude_md.exists():
-            return "No CLAUDE.md found in current directory."
-        content = claude_md.read_text(encoding="utf-8")
-        if len(content) > 2000:
-            content = content[:2000] + "\n... (truncated)"
-        return f"CLAUDE.md contents:\n\n{content}"
+    if action in ("list", "show", ""):
+        entries = store.load_all()
+        if not entries:
+            return "No memories yet. Save one with /memory add <text>, or Rex can save them itself."
+        lines = [f"Persistent memory ({len(entries)}):"]
+        for e in entries:
+            lines.append(f"  - [{e.type.value}] {e.name}: {e.description}")
+        return "\n".join(lines)
 
     if action == "add":
         if len(parts) < 2:
-            return "Usage: /memory add <text to append>"
-        text_to_add = parts[1]
-        with open(claude_md, "a", encoding="utf-8") as f:
-            f.write(f"\n{text_to_add}\n")
-        return "Appended to CLAUDE.md."
+            return "Usage: /memory add <text to remember>"
+        entry = store.add(content=parts[1])
+        return f"Remembered as '{entry.name}'. It will load in future sessions."
 
-    if action == "edit":
-        return "Use /memory show to view, then edit CLAUDE.md directly."
+    if action in ("remove", "delete", "forget"):
+        if len(parts) < 2:
+            return "Usage: /memory remove <name>"
+        return f"Removed '{parts[1]}'." if store.remove(parts[1].strip()) else f"No memory named '{parts[1].strip()}'."
 
-    return "Usage: /memory [show|add <text>|edit]"
+    if action == "project":
+        claude_md = Path.cwd() / "CLAUDE.md"
+        if not claude_md.exists():
+            return "No CLAUDE.md in the current directory."
+        content = claude_md.read_text(encoding="utf-8")
+        return f"CLAUDE.md:\n\n{content[:2000]}" + ("\n... (truncated)" if len(content) > 2000 else "")
+
+    return "Usage: /memory [list | add <text> | remove <name> | project]"
 
 
 def _handle_init_command() -> str:
@@ -1558,8 +2006,15 @@ def _handle_init_command() -> str:
 
 def _handle_resume_in_repl(args: str, session: Session, runtime: ConversationRuntime) -> str:
     """Handle /resume inside the REPL."""
-    identifier = args.strip() or "latest"
-    path = _resolve_session(identifier)
+    identifier = args.strip()
+    if not identifier:
+        # No id given: show the numbered picker so the user selects by title.
+        picked = _pick_session_interactively()
+        if picked is None:
+            return "Resume cancelled."
+        path: Path | None = picked
+    else:
+        path = _resolve_session(identifier)
     if path is None:
         return f"No session found for: {identifier}"
 
@@ -1721,10 +2176,10 @@ def _handle_session_command(args: str, session: Session) -> str:
         files = _list_sessions()
         if not files:
             return "No saved sessions."
-        lines = ["Saved sessions:", ""]
+        lines = ["Saved sessions (use /resume to pick one):", ""]
         for f in files:
             mod_time = datetime.fromtimestamp(f.stat().st_mtime).strftime("%Y-%m-%d %H:%M")
-            lines.append(f"  {f.stem}  ({mod_time})")
+            lines.append(f"  {mod_time}  {_session_title(f)}  ({f.stem[:12]})")
         return "\n".join(lines)
 
     if action == "fork":
@@ -1882,6 +2337,11 @@ async def run_repl(
 ) -> int:
     """Run the interactive REPL loop."""
     from axion.cli.input import InputSession
+    from axion.cli.render import enable_windows_vt
+
+    # Switch on VT/ANSI processing so live rendering (typing region, agent dashboard) works on the
+    # Windows console instead of leaking [K. Safe no-op elsewhere.
+    enable_windows_vt()
 
     config = _load_config()
     plugin_manager = _create_plugin_manager()
@@ -1914,25 +2374,46 @@ async def run_repl(
     text_buffer: list[str] = []
     repl_md_stream = MarkdownStreamState()
 
+    def _emit_segment(kind: str, line: str) -> None:
+        """Render one streamed line: prose as Markdown, code/fence lines verbatim."""
+        if kind == "raw":
+            # Preserve indentation; don't let Rich interpret markup or highlight code.
+            console.print(line, markup=False, highlight=False)
+        elif line.strip():
+            console.print(Markdown(line), end="")
+        else:
+            console.print()  # blank line between paragraphs
+
+    # Per-token live streaming: completed lines scroll into history, the in-progress line types
+    # out in a one-line Live region (falls back to line-granular if Live can't run). See render.py.
+    repl_streamer = LiveStreamer(console, repl_md_stream, _emit_segment)
+
+    # Spinner shown while a tool actually runs, so a slow Bash/WebFetch doesn't look frozen. It
+    # starts on on_tool_use (which fires AFTER any permission prompt) and stops on on_tool_result.
+    from axion.cli.render import Spinner as _ToolSpinnerCls
+    _tool_spinner: dict[str, Any] = {"obj": None}
+
+    def _stop_tool_spinner() -> None:
+        sp = _tool_spinner.get("obj")
+        if sp is not None:
+            try:
+                sp.stop()
+            except Exception:
+                pass
+            _tool_spinner["obj"] = None
+
     def on_text_delta(text: str) -> None:
         text_buffer.append(text)
         if output_format == "json":
             return
-        # Buffer text until we hit a safe boundary (blank line / fence end),
-        # then render that chunk as Markdown so headers, bold, lists, code
-        # blocks, and tables all show with proper formatting.
-        rendered = repl_md_stream.push(renderer, text)
-        if rendered:
-            console.print(Markdown(rendered), end="")
+        repl_streamer.push(text)
 
     def on_tool_use_cb(tool_name: str, tool_input: str) -> None:
         """Show tool invocation in real-time as it happens."""
         if output_format == "json":
             return
-        # Flush any pending markdown before showing tool
-        remaining = repl_md_stream.flush(renderer)
-        if remaining:
-            console.print(Markdown(remaining))
+        # Finalize any in-progress reply line and clear the live region before the tool block.
+        repl_streamer.finish()
         # Blank line before each tool call so it stands apart from preceding
         # model text or a previous tool's result line. Without this, tool
         # blocks crash into surrounding text and the transcript reads packed.
@@ -1943,11 +2424,23 @@ async def run_repl(
         except (json.JSONDecodeError, TypeError):
             params = {"input": tool_input[:200]} if tool_input else {}
         render_tool_call_inline(console, tool_name, params)
+        # The Agent tool renders its own live multi-agent dashboard, so don't also spin here.
+        if tool_name == "Agent":
+            return
+        # Show activity while the tool runs (it executes right after this callback returns).
+        _stop_tool_spinner()
+        try:
+            sp = _ToolSpinnerCls(console=console)  # one console for all live output (no [K leak)
+            sp.start(f"Running {tool_name}…")
+            _tool_spinner["obj"] = sp
+        except Exception:
+            _tool_spinner["obj"] = None
 
     def on_tool_result_cb(tool_name: str, output: str, is_error: bool) -> None:
         """Show tool result in real-time as it completes."""
         if output_format == "json":
             return
+        _stop_tool_spinner()  # stop the "Running…" spinner before printing the result
         render_tool_result_inline(console, tool_name, output, is_error)
         # Blank line after the result so model text following the tool
         # block has breathing room (e.g. "Let me try..." won't sit on the
@@ -1974,6 +2467,12 @@ async def run_repl(
         on_tool_use=on_tool_use_cb,
         on_tool_result=on_tool_result_cb,
     )
+
+    # Connect any configured MCP servers and expose their tools to the model.
+    _mcp_manager, _mcp_tool_map = await _setup_mcp(config)
+    if runtime.tool_executor is not None:
+        runtime.tool_executor.mcp_manager = _mcp_manager
+        runtime.tool_executor.mcp_tool_map = _mcp_tool_map
     runtime.on_thinking = on_thinking_cb
     if budget is not None:
         runtime.cost_budget_usd = budget
@@ -2008,13 +2507,27 @@ async def run_repl(
     # Input session with textarea styling
     input_session = InputSession(history_path=InputSession.default_history_path())
 
+    # Plan approval: when the model calls ExitPlanMode, show the plan and ask before it executes.
+    def _present_plan(plan_text: str) -> bool:
+        from rich.panel import Panel
+        console.print()
+        console.print(Panel(Markdown(plan_text or "(empty plan)"), title="Proposed plan", border_style="cyan"))
+        try:
+            answer = console.input("[bold]Approve this plan and let Rex implement it? [y/N] [/]").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            return False
+        return answer in ("y", "yes")
+
+    runtime.on_plan_present = _present_plan
+
     _turn_interrupted = False
 
     try:
         while True:
             # Read input with textarea-styled box
             try:
-                prompt_label = "axion[plan]" if runtime.plan_mode_active else "axion"
+                _brand = brand_prompt()
+                prompt_label = f"{_brand}[plan]" if runtime.plan_mode_active else _brand
                 user_input = await input_session.prompt(prompt_label)
                 if user_input is None:
                     console.print("\n[dim]Goodbye![/dim]")
@@ -2075,7 +2588,7 @@ async def run_repl(
 
             # Spinner to show while waiting for first response
             from axion.cli.render import Spinner as AxionSpinner
-            spinner = AxionSpinner()
+            spinner = AxionSpinner(console=console)  # same console as streaming, avoids [K interleave
             spinner_active = True
 
             _original_text_cb = runtime.on_text_delta
@@ -2128,20 +2641,64 @@ async def run_repl(
                     pending_imgs = list(runtime._pending_images)  # type: ignore[attr-defined]
                     runtime._pending_images.clear()  # type: ignore[attr-defined]
 
-                summary = await runtime.run_turn(user_input, images=pending_imgs)
+                # Run the turn as a shielded task so a first Ctrl-C can ask for a CLEAN stop (keeping
+                # any partial reply). If the turn is blocked on the network (e.g. a slow cold start),
+                # a graceful stop can't return, so after a short grace we cancel it outright — either
+                # way we return to the prompt instead of crashing the REPL with "Aborted!".
+                turn_task = asyncio.ensure_future(runtime.run_turn(user_input, images=pending_imgs))
+                summary = None
+                _cancelled = False
+                _interrupts = 0
+                while True:
+                    try:
+                        summary = await asyncio.shield(turn_task)
+                        break
+                    except KeyboardInterrupt:  # noqa: PERF203
+                        _interrupts += 1
+                        runtime.request_interrupt()
+                        _stop_spinner()
+                        _stop_tool_spinner()
+                        if _interrupts == 1:
+                            console.print("\n[yellow]Stopping…[/yellow]")
+                            try:
+                                summary = await asyncio.wait_for(
+                                    asyncio.shield(turn_task), timeout=2.0
+                                )
+                                break
+                            except (asyncio.TimeoutError, KeyboardInterrupt):
+                                pass  # stuck (likely a network wait) — cancel it below
+                        turn_task.cancel()
+                        with contextlib.suppress(BaseException):
+                            await turn_task
+                        _cancelled = True
+                        break
                 _stop_spinner()
+                _stop_tool_spinner()
 
-                if output_format == "json":
+                if _cancelled or summary is None:
+                    repl_streamer.finish()
+                    # Keep the session well-formed for the next message (drop a dangling tool_use).
+                    _m = session.messages
+                    if _m and _m[-1].role.value == "assistant" and any(
+                        hasattr(b, "id") and hasattr(b, "name") and not hasattr(b, "output")
+                        for b in _m[-1].blocks
+                    ):
+                        _m.pop()
+                    console.print("[yellow]Interrupted — stopped. Type your next message.[/yellow]")
+                elif output_format == "json":
                     json_out = _build_json_output(summary, runtime.model)
                     click.echo(json.dumps(json_out))
                 else:
-                    # Flush any remaining buffered markdown so the final
-                    # paragraph / partial sentence renders before the prompt.
-                    remaining = repl_md_stream.flush(renderer)
-                    if remaining:
-                        console.print(Markdown(remaining))
-                    elif text_buffer:
+                    # Finalize the live region + render the final partial line before the prompt.
+                    _stop_tool_spinner()
+                    had_tail = repl_streamer.finish()
+                    if not had_tail and text_buffer:
                         console.print()  # Newline after streamed text
+                    if summary is not None and summary.interrupted:
+                        console.print(
+                            "[yellow]— interrupted; the partial reply is kept. "
+                            "Type to continue or send a new direction.[/yellow]"
+                        )
                     # Extra blank line before the next prompt so the response
                     # and the next "axion >" don't crowd each other.
                     console.print()
@@ -2172,22 +2729,23 @@ async def run_repl(
 
             except KeyboardInterrupt:
                 _stop_spinner()
+                _stop_tool_spinner()
+                repl_streamer.finish()  # stop the live region, keep the partial line
                 _turn_interrupted = True
                 console.print("\n[yellow]Interrupted[/yellow]")
-                repl_md_stream._pending = ""
-                repl_md_stream._in_code_fence = False
             except Exception as exc:
                 _stop_spinner()
-                repl_md_stream._pending = ""
-                repl_md_stream._in_code_fence = False
+                _stop_tool_spinner()
+                repl_streamer.finish()  # ensure the live region is torn down before the error
                 error_msg = str(exc)
                 if output_format == "json":
                     click.echo(json.dumps({"error": error_msg}))
                 elif "context window" in error_msg.lower() or "too many tokens" in error_msg.lower():
+                    from axion.runtime.conversation import _context_window_for
                     renderer.render_context_window_error(
                         model=runtime.model,
                         estimated_tokens=estimate_session_tokens(session),
-                        context_window=200_000,
+                        context_window=_context_window_for(resolve_model_alias(runtime.model)),
                         session_id=session.session_id,
                     )
                     console.print("[dim]Try /compact to reduce history or /clear to start fresh.[/dim]")
@@ -2267,6 +2825,9 @@ async def run_repl(
 
     finally:
         await provider.close()
+        if _mcp_manager is not None:
+            with contextlib.suppress(Exception):
+                await _mcp_manager.disconnect_all()
 
     return 0
 
@@ -2535,8 +3096,8 @@ def _run_logout(provider_name: str = "anthropic") -> int:
 @click.option(
     "--permission-mode",
     type=click.Choice(["allow", "read-only", "workspace-write", "danger-full-access", "prompt"]),
-    default="allow",
-    help="Permission mode for tool execution",
+    default="prompt",
+    help="Permission mode for tool execution (default: prompt before destructive ops)",
 )
 @click.option("--prompt", "-p", default=None, help="One-shot prompt (non-interactive)")
 @click.option("--version", "-v", is_flag=True, help="Show version")
@@ -2587,6 +3148,10 @@ def cli(
     ctx.obj["permission_mode"] = permission_mode
     ctx.obj["output_format"] = output_format
     ctx.obj["system_prompt_file"] = system_prompt_file
+    # Honor the advertised --system-prompt flag: route it through the same append mechanism
+    # _build_runtime reads, so the custom prompt is added without dropping built-in sections.
+    if system_prompt_file:
+        os.environ["AXION_APPEND_SYSTEM_PROMPT_FILE"] = system_prompt_file
 
     if ctx.invoked_subcommand is not None:
         return
@@ -2802,19 +3367,30 @@ def version_cmd() -> None:
 
 
 @cli.command()
-@click.argument("session_id", default="latest")
+@click.argument("session_id", default="")
 @click.option("--model", "-m", default=None, help="Model to use (auto-detects from saved keys)")
+@click.option("--latest", "-l", is_flag=True, help="Resume the most recent session without choosing")
 @click.option(
     "--permission-mode",
     type=click.Choice(["allow", "read-only", "workspace-write", "danger-full-access", "prompt"]),
-    default="allow",
+    default="prompt",
 )
-def resume(session_id: str, model: str, permission_mode: str) -> None:
+def resume(session_id: str, model: str, latest: bool, permission_mode: str) -> None:
     """Resume a previous session.
 
-    SESSION_ID can be a full session ID, partial ID, file path, or 'latest'.
+    With no SESSION_ID, shows a numbered list of recent sessions (with titles) to pick from.
+    SESSION_ID can be a full session ID, partial ID, file path, or 'latest'; -l resumes the newest.
     """
-    exit_code = asyncio.run(run_repl(model, permission_mode, resume=session_id))
+    target = session_id.strip()
+    if latest:
+        target = "latest"
+    elif not target:
+        picked = _pick_session_interactively()
+        if picked is None:
+            console.print("[dim]Nothing selected.[/dim]")
+            sys.exit(0)
+        target = str(picked)
+    exit_code = asyncio.run(run_repl(model, permission_mode, resume=target))
     sys.exit(exit_code)
 
 
@@ -2869,9 +3445,8 @@ def session_cmd(action: str, args: tuple[str, ...]) -> None:
             return
         console.print("[bold]Saved sessions:[/bold]\n")
         for f in files:
-            mod_time = datetime.fromtimestamp(f.stat().st_mtime).strftime("%Y-%m-%d %H:%M:%S")
-            size_kb = f.stat().st_size / 1024
-            console.print(f"  {f.stem}  [dim]{mod_time}  ({size_kb:.1f} KB)[/dim]")
+            mod_time = datetime.fromtimestamp(f.stat().st_mtime).strftime("%Y-%m-%d %H:%M")
+            console.print(f"  [dim]{mod_time}[/dim]  {_session_title(f)}  [dim]({f.stem[:12]})[/dim]")
 
     elif action == "show":
         if not args:
@@ -2934,9 +3509,12 @@ def session_cmd(action: str, args: tuple[str, ...]) -> None:
     type=click.Choice(["text", "json"]),
     default="text",
 )
-def prompt_cmd(prompt_text: str, model: str, output_format: str) -> None:
+@click.option("--permission-mode", default="prompt",
+              help="Permission mode (prompt, read-only, workspace-write, danger-full-access, allow).")
+def prompt_cmd(prompt_text: str, model: str, output_format: str, permission_mode: str) -> None:
     """Send a one-shot prompt."""
-    exit_code = asyncio.run(run_one_shot(prompt_text, model, "allow", output_format))
+    # Default to "prompt" (safe), not a hardcoded "allow" that silently granted full access.
+    exit_code = asyncio.run(run_one_shot(prompt_text, model, permission_mode, output_format))
     sys.exit(exit_code)
 
 

@@ -51,7 +51,6 @@ from axion.runtime.compact import (
     estimate_session_tokens,
 )
 from axion.runtime.hooks import HookRunner
-from axion.tools.registry import _cap_tool_result
 from axion.runtime.permissions import (
     TOOL_PERMISSION_REQUIREMENTS,
     PermissionAllow,
@@ -77,6 +76,7 @@ from axion.runtime.session import (
 )
 from axion.runtime.usage import TokenUsage, UsageTracker
 from axion.telemetry.tracer import SessionTracer
+from axion.tools.registry import _cap_tool_result
 
 logger = logging.getLogger(__name__)
 

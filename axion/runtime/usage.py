@@ -223,10 +223,14 @@ class UsageTracker:
     total: TokenUsage = field(default_factory=TokenUsage)
     turn_count: int = 0
     model: str | None = None
+    by_model: dict[str, TokenUsage] = field(default_factory=dict)
 
-    def record_turn(self, usage: TokenUsage) -> None:
+    def record_turn(self, usage: TokenUsage, model: str | None = None) -> None:
         self.total += usage
         self.turn_count += 1
+        if model:
+            self.model = model
+            self.by_model.setdefault(model, TokenUsage()).__iadd__(usage)
 
     def summary_lines(self) -> list[str]:
         return self.total.summary_lines("Session total", self.model)

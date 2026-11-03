@@ -13,6 +13,7 @@ import asyncio
 import json
 import logging
 import os
+import time
 from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Any, AsyncIterator
@@ -69,6 +70,12 @@ DEFAULT_INITIAL_BACKOFF_MS = 200
 DEFAULT_MAX_BACKOFF_MS = 2000
 DEFAULT_MAX_RETRIES = 2
 RETRYABLE_STATUS_CODES = frozenset({408, 409, 429, 500, 502, 503, 504})
+# A scaled-to-zero container (Modal, etc.) returns a redirect / gateway status while it cold-starts.
+# These are waited out patiently (not counted against the normal retry budget) so the first request
+# after idle succeeds instead of erroring with "API error 303".
+COLD_START_STATUS_CODES = frozenset({303, 307, 308, 502, 503, 504})
+COLD_START_MAX_WAIT_S = 900.0  # wall-clock cap: a cold A100 can take ~10 min to load 54GB + warm up
+COLD_START_POLL_S = 3.0
 
 
 # ---------------------------------------------------------------------------
@@ -102,6 +109,23 @@ class OpenAiCompatConfig:
             default_base_url=DEFAULT_OPENAI_BASE_URL,
         )
 
+    @classmethod
+    def custom(cls) -> OpenAiCompatConfig:
+        """Any OpenAI-compatible server: vLLM, llama.cpp, LM Studio, a Modal endpoint, ...
+
+        Configured entirely through environment variables:
+          AXION_COMPAT_BASE_URL   e.g. https://my-host/v1   (required)
+          AXION_COMPAT_API_KEY    bearer token the server expects
+          AXION_COMPAT_MODELS     comma-separated model names served there (default "rex")
+          AXION_COMPAT_MAX_TOKENS max output tokens per request (default 4096)
+        """
+        return cls(
+            provider_name="Custom",
+            api_key_env="AXION_COMPAT_API_KEY",
+            base_url_env="AXION_COMPAT_BASE_URL",
+            default_base_url="",
+        )
+
     @property
     def credential_env_vars(self) -> list[str]:
         return [self.api_key_env]
@@ -127,7 +151,12 @@ class OpenAiCompatClient:
         initial_backoff_ms: int = DEFAULT_INITIAL_BACKOFF_MS,
         max_backoff_ms: int = DEFAULT_MAX_BACKOFF_MS,
     ) -> None:
-        self._http = httpx.AsyncClient(timeout=httpx.Timeout(120.0))
+        # 300s to match the other providers; a slow first byte after a cold start on a self-hosted
+        # endpoint (Rex) can exceed the old 120s and trip a read timeout.
+        # Long read timeout so a cold self-hosted container that holds the connection open while it
+        # boots (Rex: ~10 min to load 54GB) isn't cut off mid-wait; short connect timeout so a truly
+        # unreachable endpoint fails fast instead of hanging.
+        self._http = httpx.AsyncClient(timeout=httpx.Timeout(600.0, connect=10.0))
         self._api_key = api_key
         self._config = config
         self._base_url = base_url or _read_base_url(config)
@@ -195,19 +224,79 @@ class OpenAiCompatClient:
             tool_choice=request.tool_choice,
             stream=True,
         )
-        response = await self._send_with_retry(req)
 
         parser = OpenAiSseParser()
         state = _StreamState(model=req.model)
 
-        async for raw_chunk in response.aiter_bytes():
+        async for raw_chunk in self._stream_raw_bytes(req):
             for chunk in parser.push(raw_chunk):
                 for event in state.ingest_chunk(chunk):
                     yield event
 
+        # Flush any residual frame the server sent without a trailing blank line.
+        for chunk in parser.finish():
+            for event in state.ingest_chunk(chunk):
+                yield event
+
         # Finalize the stream
         for event in state.finish():
             yield event
+
+    async def _stream_raw_bytes(self, request: MessageRequest) -> AsyncIterator[bytes]:
+        """Open a streaming POST and yield body chunks as they arrive.
+
+        Uses http.stream (not http.post, which reads the whole body before returning — the old
+        behavior meant nothing reached the UI until generation finished). Retries only before the
+        first byte, on retryable statuses; a mid-stream drop is not retried to avoid double-emitting.
+        """
+        url = _chat_completions_endpoint(self._base_url)
+        body = _build_chat_completion_request(request, self._config)
+        headers = {
+            "content-type": "application/json",
+            "authorization": f"Bearer {self._api_key}",
+        }
+        attempts = 0
+        cold_started_at: float | None = None  # wall-clock start of the cold-start wait
+
+        def _cold_ok() -> bool:
+            # True while we're still within the cold-start grace window (measured in real time, so a
+            # 5-minute read-timeout counts fully, not as one 3s tick).
+            nonlocal cold_started_at
+            now = time.monotonic()
+            if cold_started_at is None:
+                cold_started_at = now
+            return (now - cold_started_at) < COLD_START_MAX_WAIT_S
+
+        while True:
+            attempts += 1
+            try:
+                async with self._http.stream("POST", url, json=body, headers=headers) as response:
+                    if not response.is_success:
+                        await response.aread()
+                        # Self-hosted endpoints (e.g. Modal) scale to zero; the first request after
+                        # idle returns a redirect / gateway error while the container boots. Wait it
+                        # out and retry transparently instead of failing the turn (the spinner keeps
+                        # the wait visible). Bounded by wall-clock so a genuinely-down endpoint errors.
+                        if response.status_code in COLD_START_STATUS_CODES and _cold_ok():
+                            await asyncio.sleep(COLD_START_POLL_S)
+                            continue
+                        _expect_success(response)  # raises ApiResponseError
+                    async for raw_chunk in response.aiter_bytes():
+                        yield raw_chunk
+                    return
+            except (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout) as exc:
+                # Container not accepting connections / still booting — same cold-start case.
+                if _cold_ok():
+                    await asyncio.sleep(COLD_START_POLL_S)
+                    continue
+                raise HttpError(str(exc), cause=exc) from exc
+            except httpx.HTTPError as exc:
+                raise HttpError(str(exc), cause=exc) from exc
+            except ApiError as err:
+                if err.is_retryable() and attempts <= self._max_retries:
+                    await asyncio.sleep(self._backoff_for_attempt(attempts))
+                    continue
+                raise
 
     async def close(self) -> None:
         """Close the underlying HTTP client."""
@@ -293,6 +382,21 @@ class OpenAiSseParser:
                 results.append(parsed)
 
         return results
+
+    def finish(self) -> list[dict[str, Any]]:
+        """Parse any bytes left in the buffer when the stream ends.
+
+        A non-conformant server (some vLLM/custom endpoints) may close right after `data: {...}`
+        without the terminating blank line; without this the final frame — often the last content
+        delta or the usage chunk — is silently dropped.
+        """
+        if not self._buffer.strip():
+            self._buffer.clear()
+            return []
+        frame = bytes(self._buffer).decode("utf-8", errors="replace")
+        self._buffer.clear()
+        parsed = _parse_sse_frame(frame)
+        return [parsed] if parsed is not None else []
 
     def _next_frame(self) -> str | None:
         pos = self._buffer.find(b"\n\n")
@@ -737,13 +841,21 @@ def _parse_tool_arguments(arguments: str) -> Any:
 
 def _normalize_finish_reason(value: str) -> str:
     """Map OpenAI finish reasons to Anthropic stop reasons."""
-    mapping = {"stop": "end_turn", "tool_calls": "tool_use"}
+    mapping = {
+        "stop": "end_turn",
+        "tool_calls": "tool_use",
+        # "length" is OpenAI's truncation reason; Anthropic's is "max_tokens". Without this, truncation
+        # detection misfires and the agent loop can try to continue as if a tool call were pending.
+        "length": "max_tokens",
+        "content_filter": "end_turn",
+    }
     return mapping.get(value, value)
 
 
 def _should_request_stream_usage(config: OpenAiCompatConfig) -> bool:
-    """Only OpenAI proper requires the stream_options usage opt-in."""
-    return config.provider_name == "OpenAI"
+    """OpenAI-style servers need stream_options to report usage while streaming. xAI is one too;
+    without it every streamed Grok response reports zero tokens."""
+    return config.provider_name in ("OpenAI", "Custom", "xAI")
 
 
 def _chat_completions_endpoint(base_url: str) -> str:
@@ -762,7 +874,13 @@ def _read_env_non_empty(key: str) -> str | None:
 
 def _read_base_url(config: OpenAiCompatConfig) -> str:
     """Read the base URL from env or fall back to the default."""
-    return os.environ.get(config.base_url_env, "") or config.default_base_url
+    url = os.environ.get(config.base_url_env, "") or config.default_base_url
+    if not url:
+        raise ApiError(
+            f"{config.base_url_env} must be set to use the {config.provider_name} provider "
+            f"(e.g. https://host/v1)"
+        )
+    return url
 
 
 def _request_id_from_headers(headers: httpx.Headers) -> str | None:

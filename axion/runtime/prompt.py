@@ -280,6 +280,7 @@ def _get_tools_section() -> str:
         "To read files use Read instead of cat/head/tail. To edit files use Edit instead of sed/awk. To create files use Write instead of echo/cat heredoc. To search files use Glob instead of find. To search content use Grep instead of grep/rg.",
         "Break down complex tasks and manage work with the TodoWrite tool when appropriate.",
         "You can call multiple tools in a single response. If there are no dependencies between calls, make all independent tool calls in parallel.",
+        "Delegate large or parallelizable work to sub-agents WITHOUT being asked. Before starting a big task, ask yourself: does this split into independent parts? If yes, spawn one focused Agent per part and run them in parallel, then synthesize — don't grind through them one by one yourself. Concrete triggers to fan out: searching or auditing several files/areas/modules; investigating multiple independent questions; building or testing multiple components; a pentest across several hosts or a web app plus its API; anything you'd otherwise do as a long serial slog. Rule of thumb: 2+ independent chunks of real work → spawn an Agent for each (explore/plan for read-only, general or a custom role otherwise). One Agent call per chunk, all in the same turn so they run concurrently. Keep each sub-agent's scope tight and explicit. Reserve doing it yourself for small or tightly-dependent work.",
     ]
     return "# Using your tools\n" + "\n".join(f" - {item}" for item in items)
 

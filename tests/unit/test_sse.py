@@ -69,3 +69,16 @@ def test_finish_flushes():
     parser.push(b'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"X"}}')
     events = parser.finish()
     assert len(events) == 1
+
+
+def test_openai_sse_parser_flush():
+    """A final frame with no trailing blank line must still be parsed on finish()."""
+    from axion.api.openai_compat import OpenAiSseParser
+    p = OpenAiSseParser()
+    # feed a complete frame + a trailing frame WITHOUT the closing blank line
+    got = p.push(b'data: {"id":"1","choices":[{"delta":{"content":"a"}}]}\n\n')
+    assert len(got) == 1
+    got2 = p.push(b'data: {"id":"1","choices":[],"usage":{"prompt_tokens":5,"completion_tokens":1}}')
+    assert got2 == []  # buffered, not yet delimited
+    flushed = p.finish()
+    assert len(flushed) == 1 and flushed[0]["usage"]["prompt_tokens"] == 5

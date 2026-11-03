@@ -357,13 +357,30 @@ class ConfigLoader:
         except (json.JSONDecodeError, OSError):
             return None
 
+    # Permission list fields are unioned across layers instead of replaced, so a project config can
+    # add to (not silently wipe) the user's global allow/deny lists.
+    _UNION_LIST_KEYS = frozenset({"allowedTools", "deniedTools"})
+
     @staticmethod
     def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> None:
+        import copy
+
         for key, value in override.items():
             if key in base and isinstance(base[key], dict) and isinstance(value, dict):
                 ConfigLoader._deep_merge(base[key], value)
+            elif (
+                key in ConfigLoader._UNION_LIST_KEYS
+                and isinstance(base.get(key), list)
+                and isinstance(value, list)
+            ):
+                merged = list(base[key])
+                for item in value:
+                    if item not in merged:
+                        merged.append(item)
+                base[key] = merged
             else:
-                base[key] = value
+                # Deep-copy so the merged config never aliases (and later mutates) a source layer's dict.
+                base[key] = copy.deepcopy(value)
 
     def render_config_report(self) -> str:
         """Render a human-readable configuration report."""

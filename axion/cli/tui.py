@@ -140,8 +140,10 @@ def render_welcome_screen(
     )
 
     # Left column: version + mascot
+    from axion.cli.brand import brand_name
+
     left_lines = [
-        f"[dim]- - -[/dim] [bold]Axion Code[/bold] v{version} [dim]- - -[/dim]",
+        f"[dim]- - -[/dim] [bold]{brand_name()}[/bold] v{version} [dim]- - -[/dim]",
         "",
     ]
     if resumed:
@@ -221,7 +223,7 @@ def render_assistant_response(console: Console, text: str) -> None:
     """Render an assistant response in a panel."""
     if not text.strip():
         return
-    from rich.markdown import Markdown
+    from axion.cli.render import CompactMarkdown as Markdown
     console.print()
     console.print(Markdown(text))
     console.print()
@@ -367,6 +369,25 @@ def render_tool_result_inline(
         else:
             console.print(f"  [dim]└[/dim] [red]Error: {first_line[:140]}[/red]")
         return
+
+    # Render the todo list as a visible checklist (like Claude Code), not a one-line summary.
+    if tool_name == "TodoWrite":
+        try:
+            from axion.tools.registry import BuiltinToolExecutor
+            todos = BuiltinToolExecutor.get_todo_list()
+        except Exception:
+            todos = []
+        if todos:
+            for t in todos:
+                status = t.get("status", "pending")
+                content = t.get("content", "")
+                if status == "completed":
+                    console.print(f"    [green]☒[/green] [dim strike]{content}[/dim strike]")
+                elif status == "in_progress":
+                    console.print(f"    [yellow]▶[/yellow] [bold]{t.get('activeForm') or content}[/bold]")
+                else:
+                    console.print(f"    [dim]☐ {content}[/dim]")
+            return
 
     summary = _summarize_tool_output(tool_name, output)
     console.print(f"  [dim]└[/dim] [dim]{summary}[/dim]")
@@ -675,7 +696,7 @@ def render_session_history(
     """
     import json as _json
 
-    from rich.markdown import Markdown
+    from axion.cli.render import CompactMarkdown as Markdown
 
     if not messages:
         return

@@ -11,10 +11,13 @@ from typing import TYPE_CHECKING
 
 from axion.runtime.session import (
     ConversationMessage,
+    ImageBlock,
     MessageRole,
     Session,
     SessionCompaction,
     TextBlock,
+    ToolResultBlock,
+    ToolUseBlock,
 )
 
 if TYPE_CHECKING:
@@ -42,18 +45,39 @@ class CompactionResult:
     estimated_tokens_after: int
 
 
-def estimate_session_tokens(session: Session) -> int:
-    """Rough estimate of token count in a session.
+def _safe_split_index(messages: list, preserve_recent: int) -> int:
+    """Boundary between summarized-old and kept-recent messages that never orphans a tool_result.
 
-    Uses ~4 chars per token heuristic.
+    Starts at total-preserve_recent and moves earlier while the first kept message contains a
+    ToolResultBlock, so the assistant tool_use that produced it is kept too (never summarized away).
+    """
+    idx = len(messages) - preserve_recent
+    while idx > 0 and any(isinstance(b, ToolResultBlock) for b in messages[idx].blocks):
+        idx -= 1
+    return idx
+
+
+def estimate_session_tokens(session: Session) -> int:
+    """Rough estimate of token count in a session (~4 chars per token).
+
+    Tool results and tool-use inputs carry the real bulk of an agent session (a single file
+    read can be thousands of tokens), so they must be counted by their actual length. Counting
+    them as a flat 100 chars — as this did previously — made the estimate wildly low, which in
+    turn silently disabled auto-compaction and let the prompt overflow the model's context window.
     """
     total_chars = 0
     for msg in session.messages:
         for block in msg.blocks:
             if isinstance(block, TextBlock):
                 total_chars += len(block.text)
+            elif isinstance(block, ToolResultBlock):
+                total_chars += len(block.output) + len(block.tool_name)
+            elif isinstance(block, ToolUseBlock):
+                total_chars += len(block.input) + len(block.name)
+            elif isinstance(block, ImageBlock):
+                total_chars += 1000  # images cost roughly this many tokens once tiled
             else:
-                total_chars += 100  # Rough estimate for non-text blocks
+                total_chars += 100
     return total_chars // 4
 
 
@@ -76,19 +100,32 @@ def compact_session(
     if total_messages <= cfg.preserve_recent_messages:
         return None
 
-    # Split into old and recent
-    split_idx = total_messages - cfg.preserve_recent_messages
+    # Split into old and recent, snapping the boundary so it never falls between an assistant
+    # tool_use and its tool_result(s). Cutting there would summarize away the tool_use while keeping
+    # an orphaned tool_result as the first recent message, which the provider rejects (400) and kills
+    # the very next request. Move the boundary earlier until recent no longer starts with a result.
+    split_idx = _safe_split_index(session.messages, cfg.preserve_recent_messages)
+    if split_idx <= 0:
+        return None
     old_messages = session.messages[:split_idx]
     recent_messages = session.messages[split_idx:]
 
-    # Build summary from old messages
+    # Build summary from old messages. Include tool activity, not just text: tool calls and their
+    # results are the bulk of an agent session (files read, commands run), so a text-only summary
+    # threw away exactly the context the model needs to keep working. Keep names + truncated output.
     summary_parts: list[str] = []
     for msg in old_messages:
         for block in msg.blocks:
             if isinstance(block, TextBlock):
-                # Truncate long texts
                 text = block.text[:200] + "..." if len(block.text) > 200 else block.text
                 summary_parts.append(f"[{msg.role.value}] {text}")
+            elif isinstance(block, ToolUseBlock):
+                args = block.input if len(block.input) <= 120 else block.input[:120] + "..."
+                summary_parts.append(f"[tool call] {block.name}({args})")
+            elif isinstance(block, ToolResultBlock):
+                out = block.output.strip()
+                out = out[:200] + "..." if len(out) > 200 else out
+                summary_parts.append(f"[tool result: {block.tool_name}] {out}")
 
     summary = "\n".join(summary_parts)
     if len(summary) > cfg.summary_max_tokens * 4:
@@ -152,7 +189,10 @@ async def model_compact_session(
     if total_messages <= cfg.preserve_recent_messages:
         return None
 
-    split_idx = total_messages - cfg.preserve_recent_messages
+    # Same tool_use/tool_result boundary guard as the heuristic path (see _safe_split_index).
+    split_idx = _safe_split_index(session.messages, cfg.preserve_recent_messages)
+    if split_idx <= 0:
+        return None
     old_messages = session.messages[:split_idx]
     recent_messages = session.messages[split_idx:]
 

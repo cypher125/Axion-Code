@@ -48,3 +48,20 @@ def test_config_deep_merge(tmp_path):
     assert config.feature_config.permission_mode == "allow"
     # Model should be preserved from project
     assert config.feature_config.model == "claude-sonnet-4-6"
+
+
+def test_permission_lists_union_not_overwrite(tmp_path):
+    from axion.runtime.config import ConfigLoader
+    base = {"permissions": {"allowedTools": ["Read", "Grep"]}}
+    override = {"permissions": {"allowedTools": ["Grep", "Bash"]}}
+    ConfigLoader._deep_merge(base, override)
+    assert set(base["permissions"]["allowedTools"]) == {"Read", "Grep", "Bash"}
+
+
+def test_deep_merge_does_not_alias_source(tmp_path):
+    from axion.runtime.config import ConfigLoader
+    base = {}
+    override = {"nested": {"x": 1}}
+    ConfigLoader._deep_merge(base, override)
+    base["nested"]["x"] = 99
+    assert override["nested"]["x"] == 1  # source not mutated

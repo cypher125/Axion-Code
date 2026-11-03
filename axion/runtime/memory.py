@@ -65,11 +65,16 @@ def _parse_frontmatter(text: str) -> tuple[dict[str, str], str]:
     return meta, match.group(2)
 
 
+def _one_line(value: str) -> str:
+    """Collapse newlines so a value can't break the single-line frontmatter format."""
+    return " ".join(value.splitlines()).strip()
+
+
 def _build_frontmatter(entry: MemoryEntry) -> str:
     lines = [
         "---",
-        f"name: {entry.name}",
-        f"description: {entry.description}",
+        f"name: {_one_line(entry.name)}",
+        f"description: {_one_line(entry.description)}",
         f"type: {entry.type.value}",
         f"created_at: {entry.created_at}",
         f"updated_at: {entry.updated_at}",
@@ -100,18 +105,65 @@ class MemoryStore:
 
     def _entry_path(self, name: str) -> Path:
         safe_name = re.sub(r"[^\w\-.]", "_", name)
+        if safe_name != name:
+            # Sanitization changed the name; append a deterministic hash so distinct names that
+            # sanitize to the same slug (e.g. "a b" and "a/b") don't silently overwrite each other.
+            import hashlib
+
+            safe_name = f"{safe_name}-{hashlib.sha1(name.encode('utf-8')).hexdigest()[:8]}"
         return self.memory_dir / f"{safe_name}.md"
 
     # -- CRUD ---------------------------------------------------------------
 
     def save(self, entry: MemoryEntry) -> Path:
-        """Write an entry as a .md file with YAML frontmatter."""
+        """Write an entry as a .md file with YAML frontmatter and refresh the index."""
         self._ensure_dir()
         entry.updated_at = datetime.now(timezone.utc).isoformat()
         path = self._entry_path(entry.name)
         path.write_text(_build_frontmatter(entry), encoding="utf-8")
         logger.debug("Saved memory entry '%s' to %s", entry.name, path)
+        self.save_index()
         return path
+
+    def add(
+        self,
+        content: str,
+        description: str = "",
+        name: str | None = None,
+        type: MemoryType = MemoryType.USER,
+    ) -> MemoryEntry:
+        """Create and persist a memory from raw text. Auto-derives name/description if omitted."""
+        content = content.strip()
+        if not description:
+            description = _one_line(content)[:120]
+        if not name:
+            slug = re.sub(r"[^\w]+", "-", _one_line(content).lower()).strip("-")[:48]
+            name = slug or datetime.now(timezone.utc).strftime("memory-%Y%m%d%H%M%S")
+        entry = MemoryEntry(name=name, description=description, type=type, content=content)
+        self.save(entry)
+        return entry
+
+    def render_for_prompt(self, max_chars: int = 4000) -> str:
+        """Format all memories as a system-prompt section, or "" if there are none."""
+        entries = self.load_all()
+        if not entries:
+            return ""
+        lines = [
+            "# Persistent memory",
+            "",
+            "Things you have learned about the user and their projects across past sessions. "
+            "Treat this as trusted background context you already know.",
+            "",
+        ]
+        for e in entries:
+            lines.append(f"- **{e.name}** ({e.type.value}): {e.description}")
+            body = e.content.strip()
+            if body and body != e.description:
+                lines.append(f"  {_one_line(body)[:400]}")
+        text = "\n".join(lines)
+        if len(text) > max_chars:
+            text = text[:max_chars].rstrip() + "\n... (memory truncated)"
+        return text
 
     def load(self, name: str) -> MemoryEntry | None:
         """Read a single memory file by name."""
@@ -139,6 +191,7 @@ class MemoryStore:
         if path.is_file():
             path.unlink()
             logger.debug("Removed memory entry '%s'", name)
+            self.save_index()
             return True
         return False
 

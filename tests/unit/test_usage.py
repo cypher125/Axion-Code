@@ -65,3 +65,15 @@ def test_iadd():
     a += b
     assert a.input_tokens == 15
     assert a.output_tokens == 35
+
+
+def test_per_model_usage_tracking():
+    from axion.runtime.usage import TokenUsage, UsageTracker
+    tr = UsageTracker()
+    tr.record_turn(TokenUsage(input_tokens=100, output_tokens=50), model="rex")
+    tr.record_turn(TokenUsage(input_tokens=200, output_tokens=20), model="claude-opus-5")
+    tr.record_turn(TokenUsage(input_tokens=10, output_tokens=5), model="rex")
+    assert set(tr.by_model) == {"rex", "claude-opus-5"}
+    assert tr.by_model["rex"].input_tokens == 110
+    assert tr.by_model["claude-opus-5"].output_tokens == 20
+    assert tr.total.input_tokens == 310 and tr.turn_count == 3

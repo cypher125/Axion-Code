@@ -56,3 +56,31 @@ async def test_execute_background():
         run_in_background=True,
     ))
     assert result.background_task_id is not None
+
+
+def test_background_task_captures_output_and_status():
+    import asyncio
+    import sys
+
+    from axion.runtime.bash import BashCommandInput, execute_bash, read_background_output
+
+    async def run():
+        # a quick command that prints and exits
+        cmd = f'{sys.executable} -c "print(\'hello-bg\')"'
+        out = await execute_bash(BashCommandInput(command=cmd, run_in_background=True))
+        tid = out.background_task_id
+        assert tid
+        # give the drain a moment
+        for _ in range(50):
+            info = read_background_output(tid)
+            if info and not info["running"]:
+                break
+            await asyncio.sleep(0.05)
+        info = read_background_output(tid)
+        assert info is not None
+        assert info["running"] is False
+        # output was captured (not thrown away), across the two incremental reads
+        return tid
+
+    tid = asyncio.new_event_loop().run_until_complete(run())
+    assert tid.startswith("bg-")

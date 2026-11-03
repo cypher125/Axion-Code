@@ -51,3 +51,18 @@ def test_command_registry():
     assert reg.get("help") is not None
     assert reg.get("nonexistent") is None
     assert len(reg.all_specs()) > 10
+
+
+
+
+def test_help_lists_skills_and_no_duplicate_review():
+    from axion.commands.parsing import render_help, render_help_detail
+    from axion.commands.registry import CommandRegistry
+    reg = CommandRegistry()
+    reg.register_skill_command("mydeploy", "deploy the app")
+    h = render_help(reg)
+    assert "mydeploy" in h and "deploy the app" in h        # skill shows in /help
+    assert h.count("/review") == 1                          # no duplicate review
+    # detail lookup works and shows usage
+    d = render_help_detail("rewind", reg)
+    assert d and "Usage:" in d

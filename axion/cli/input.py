@@ -222,8 +222,10 @@ class InputSession:
     def _toolbar(self) -> HTML:
         """Build the fixed bottom toolbar content."""
         if self._status_turn == 0:
+            from axion.cli.brand import brand_prompt
+
             return HTML(
-                " <b>axion</b> │ /help for commands │ Ctrl+C to interrupt"
+                f" <b>{brand_prompt()}</b> │ /help for commands │ Ctrl+C to interrupt"
             )
         mode = getattr(self, "_status_auth_mode", "")
         model_lc = (self._status_model or "").lower()
@@ -259,9 +261,14 @@ class InputSession:
         self._status_turn = turn
         self._status_auth_mode = auth_mode
 
-    async def prompt(self, prompt_text: str = "axion") -> str | None:
+    async def prompt(self, prompt_text: str | None = None) -> str | None:
         """Get input with a clean prompt, placeholder hint, and fixed toolbar."""
         import random
+
+        if prompt_text is None:
+            from axion.cli.brand import brand_prompt
+
+            prompt_text = brand_prompt()
 
         placeholders = [
             "Try: fix the bug in main.py",

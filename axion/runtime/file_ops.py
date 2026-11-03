@@ -79,6 +79,21 @@ class StructuredPatchHunk:
     lines: list[str]
 
 
+def format_unified_diff(old: str, new: str, path: str = "", max_lines: int = 80) -> str:
+    """A compact unified diff of a change, for showing the user what an edit actually did."""
+    import difflib
+
+    diff = list(difflib.unified_diff(
+        old.splitlines(), new.splitlines(),
+        fromfile=f"a/{path}", tofile=f"b/{path}", lineterm="", n=2,
+    ))
+    if not diff:
+        return ""
+    if len(diff) > max_lines:
+        diff = diff[:max_lines] + [f"... ({len(diff) - max_lines} more diff lines)"]
+    return "\n".join(diff)
+
+
 def make_patch(original: str, modified: str, filename: str = "") -> list[StructuredPatchHunk]:
     """Generate unified diff hunks between original and modified text."""
     orig_lines = original.splitlines(keepends=True)
@@ -325,7 +340,13 @@ def edit_file(
     if old_string == new_string:
         raise ValueError("old_string and new_string are identical — no change needed")
 
-    content = path.read_text(encoding="utf-8")
+    # Read strictly, but fail with a clear message rather than a generic error, or (worse) silently
+    # corrupting a file by writing back errors="replace" content. Read uses errors="replace", so a file
+    # the model could Read may not be safely Editable — say so.
+    try:
+        content = path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        raise ValueError(f"{file_path} is not valid UTF-8 text and cannot be edited safely.")
     count = content.count(old_string)
 
     if count == 0:

@@ -46,12 +46,16 @@ def test_interrupt_preserves_partial_text(tmp_path):
     """Interrupting mid-stream keeps the partial assistant text and marks the turn interrupted,
     leaving the session well-formed (no dangling tool_use)."""
     import asyncio
-    from types import SimpleNamespace
+
+    from axion.api.types import (
+        ContentBlockDeltaEvent,
+        MessageResponse,
+        MessageStartEvent,
+        TextDelta,
+        Usage,
+    )
     from axion.runtime.conversation import ConversationRuntime
     from axion.runtime.session import Session
-    from axion.api.types import (
-        MessageStartEvent, ContentBlockDeltaEvent, MessageResponse, TextDelta, Usage,
-    )
 
     class SlowProvider:
         async def stream_message(self, request):
@@ -81,7 +85,9 @@ def test_interrupt_preserves_partial_text(tmp_path):
 
 def test_exit_plan_mode_approval_flow():
     """ExitPlanMode presents the plan; approving leaves plan mode, rejecting stays."""
-    import asyncio, json
+    import asyncio
+    import json
+
     from axion.runtime.conversation import ConversationRuntime
     from axion.runtime.session import Session
 
@@ -111,12 +117,20 @@ def test_loop_guard_stops_repeated_tool_calls():
     """The loop guard breaks the turn when the model repeats the same dead-end call, well before
     the hard max-iterations cap — so a flailing model doesn't burn 50 iterations on nothing."""
     import asyncio
+
+    from axion.api.types import (
+        ContentBlockDeltaEvent,
+        ContentBlockStartEvent,
+        InputJsonDelta,
+        MessageDelta,
+        MessageDeltaEvent,
+        MessageResponse,
+        MessageStartEvent,
+        ToolUseOutputBlock,
+        Usage,
+    )
     from axion.runtime.conversation import ConversationRuntime
     from axion.runtime.session import Session
-    from axion.api.types import (
-        MessageStartEvent, ContentBlockStartEvent, ContentBlockDeltaEvent, MessageDeltaEvent,
-        MessageResponse, ToolUseOutputBlock, InputJsonDelta, MessageDelta, Usage,
-    )
 
     class RepeatProvider:
         async def stream_message(self, request):
@@ -146,12 +160,20 @@ def test_loop_guard_stops_varied_dead_end_commands():
     """Different-but-fruitless commands (the playwright-artifact hunt) trip the low-value cap even
     though no single call repeats — because none of them return new information."""
     import asyncio
+
+    from axion.api.types import (
+        ContentBlockDeltaEvent,
+        ContentBlockStartEvent,
+        InputJsonDelta,
+        MessageDelta,
+        MessageDeltaEvent,
+        MessageResponse,
+        MessageStartEvent,
+        ToolUseOutputBlock,
+        Usage,
+    )
     from axion.runtime.conversation import ConversationRuntime
     from axion.runtime.session import Session
-    from axion.api.types import (
-        MessageStartEvent, ContentBlockStartEvent, ContentBlockDeltaEvent, MessageDeltaEvent,
-        MessageResponse, ToolUseOutputBlock, InputJsonDelta, MessageDelta, Usage,
-    )
 
     n = {"i": 0}
 
@@ -182,12 +204,20 @@ def test_loop_guard_stops_repeated_404_downloads():
     varies the URL every time so no signature repeats — yet each result is permanently futile. Three
     no-progress rounds in a row must trip the guard fast, instead of sleep-and-retrying forever."""
     import asyncio
+
+    from axion.api.types import (
+        ContentBlockDeltaEvent,
+        ContentBlockStartEvent,
+        InputJsonDelta,
+        MessageDelta,
+        MessageDeltaEvent,
+        MessageResponse,
+        MessageStartEvent,
+        ToolUseOutputBlock,
+        Usage,
+    )
     from axion.runtime.conversation import ConversationRuntime
     from axion.runtime.session import Session
-    from axion.api.types import (
-        MessageStartEvent, ContentBlockStartEvent, ContentBlockDeltaEvent, MessageDeltaEvent,
-        MessageResponse, ToolUseOutputBlock, InputJsonDelta, MessageDelta, Usage,
-    )
 
     n = {"i": 0}
 
@@ -221,12 +251,20 @@ def test_loop_guard_stops_repeated_404_downloads():
 def test_interrupt_during_tool_loop_stops_cleanly():
     """Ctrl-C during a tool-heavy turn stops cleanly (interrupted, session well-formed) — not a crash."""
     import asyncio
+
+    from axion.api.types import (
+        ContentBlockDeltaEvent,
+        ContentBlockStartEvent,
+        InputJsonDelta,
+        MessageDelta,
+        MessageDeltaEvent,
+        MessageResponse,
+        MessageStartEvent,
+        ToolUseOutputBlock,
+        Usage,
+    )
     from axion.runtime.conversation import ConversationRuntime
     from axion.runtime.session import Session
-    from axion.api.types import (
-        MessageStartEvent, ContentBlockStartEvent, ContentBlockDeltaEvent, MessageDeltaEvent,
-        MessageResponse, ToolUseOutputBlock, InputJsonDelta, MessageDelta, Usage,
-    )
 
     runtime_ref = {}
 
@@ -264,11 +302,15 @@ def test_parallel_permission_prompts_only_once():
     """Several parallel calls to the same tool (e.g. a fan-out of Agent spawns) prompt only once —
     after the first 'allow always', the rest return the cached allow instead of re-asking."""
     import asyncio
+
     from axion.runtime.conversation import ConversationRuntime
-    from axion.runtime.session import Session
     from axion.runtime.permissions import (
-        PermissionAllow, PermissionMode, PermissionPolicy, PermissionPromptDecision,
+        PermissionAllow,
+        PermissionMode,
+        PermissionPolicy,
+        PermissionPromptDecision,
     )
+    from axion.runtime.session import Session
 
     class CountingPrompter:
         def __init__(self) -> None:
@@ -298,12 +340,20 @@ def test_parallel_permission_prompts_only_once():
 def test_incomplete_tool_call_triggers_retry():
     """A truncated tool-call JSON on the first stream is retried, not executed as garbage."""
     import asyncio
+
+    from axion.api.types import (
+        ContentBlockDeltaEvent,
+        ContentBlockStartEvent,
+        InputJsonDelta,
+        MessageDelta,
+        MessageDeltaEvent,
+        MessageResponse,
+        MessageStartEvent,
+        ToolUseOutputBlock,
+        Usage,
+    )
     from axion.runtime.conversation import ConversationRuntime
     from axion.runtime.session import Session
-    from axion.api.types import (
-        MessageStartEvent, ContentBlockStartEvent, ContentBlockDeltaEvent, MessageDeltaEvent,
-        MessageResponse, ToolUseOutputBlock, InputJsonDelta, MessageDelta, Usage,
-    )
 
     attempts = {"n": 0}
 

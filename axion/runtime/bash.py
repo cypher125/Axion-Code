@@ -10,9 +10,11 @@ import enum
 import logging
 import os
 import sys
+import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -71,12 +73,84 @@ class BashCommandOutput:
 # Background task tracking
 # ---------------------------------------------------------------------------
 
-_background_tasks: dict[str, asyncio.subprocess.Process] = {}
+@dataclass
+class _BackgroundTask:
+    process: asyncio.subprocess.Process
+    command: str
+    started_at: float
+    chunks: list[str] = field(default_factory=list)
+    read_offset: int = 0  # chars already handed to a reader (so reads return only new output)
+    exit_code: int | None = None
+    drain_task: Any = None
+
+
+_background_tasks: dict[str, _BackgroundTask] = {}
 
 
 def get_background_task(task_id: str) -> asyncio.subprocess.Process | None:
-    """Get a background task by ID."""
-    return _background_tasks.get(task_id)
+    """Get a background task's process by ID (legacy accessor)."""
+    bt = _background_tasks.get(task_id)
+    return bt.process if bt else None
+
+
+async def _drain_background(bt: "_BackgroundTask") -> None:
+    """Continuously read the process's stdout/stderr into its buffer until it exits."""
+    async def pump(stream: Any, prefix: str = "") -> None:
+        if stream is None:
+            return
+        while True:
+            line = await stream.readline()
+            if not line:
+                break
+            bt.chunks.append(prefix + line.decode("utf-8", errors="replace"))
+    try:
+        await asyncio.gather(
+            pump(bt.process.stdout),
+            pump(bt.process.stderr, "[stderr] "),
+            return_exceptions=True,
+        )
+        bt.exit_code = await bt.process.wait()
+    except Exception:  # pragma: no cover - defensive
+        bt.exit_code = bt.exit_code if bt.exit_code is not None else -1
+
+
+def read_background_output(task_id: str, kill: bool = False) -> dict[str, Any] | None:
+    """Return new output + status for a background task (None if unknown).
+
+    Returns only output not yet read (tracked per task), so repeated polls show just what's new.
+    """
+    bt = _background_tasks.get(task_id)
+    if bt is None:
+        return None
+    if kill and bt.exit_code is None:
+        try:
+            bt.process.kill()
+        except ProcessLookupError:
+            pass
+    full = "".join(bt.chunks)
+    new_output = full[bt.read_offset:]
+    bt.read_offset = len(full)
+    return {
+        "task_id": task_id,
+        "command": bt.command,
+        "running": bt.exit_code is None,
+        "exit_code": bt.exit_code,
+        "new_output": new_output,
+        "elapsed_s": round(time.time() - bt.started_at, 1),
+    }
+
+
+def list_background_tasks() -> list[dict[str, Any]]:
+    return [
+        {
+            "task_id": tid,
+            "command": bt.command,
+            "running": bt.exit_code is None,
+            "exit_code": bt.exit_code,
+            "elapsed_s": round(time.time() - bt.started_at, 1),
+        }
+        for tid, bt in _background_tasks.items()
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -367,19 +441,26 @@ async def _execute_background(
     shell_cmd = _build_sandbox_command(input_cfg.command, input_cfg.cwd, input_cfg)
 
     try:
+        # Capture output (was DEVNULL, which threw it away) so it can be read back via read_background_output.
         process = await asyncio.create_subprocess_exec(
             *shell_cmd,
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
             cwd=cwd,
+            limit=4 * 1024 * 1024,
         )
 
         task_id = f"bg-{uuid.uuid4().hex[:8]}"
-        _background_tasks[task_id] = process
+        bt = _BackgroundTask(process=process, command=input_cfg.command, started_at=time.time())
+        bt.drain_task = asyncio.ensure_future(_drain_background(bt))
+        _background_tasks[task_id] = bt
 
         return BashCommandOutput(
             background_task_id=task_id,
-            stdout=f"Background task started: {task_id} (PID: {process.pid})",
+            stdout=(
+                f"Background task started: {task_id} (PID: {process.pid}). "
+                f"Use BashOutput with task_id={task_id} to read its output or kill it."
+            ),
         )
     except Exception as exc:
         return BashCommandOutput(

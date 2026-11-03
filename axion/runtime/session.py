@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import enum
 import json
+import os
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -205,6 +206,9 @@ class Session:
     messages: list[ConversationMessage] = field(default_factory=list)
     compaction: SessionCompaction | None = None
     fork: SessionFork | None = None
+    # Optional human-readable name for the session (set via /rename). Used as the picker title when
+    # present; kept separate from session_id so renaming never breaks id-based resolution.
+    title: str | None = None
     _persistence_path: Path | None = field(default=None, repr=False)
 
     def with_persistence_path(self, path: Path) -> Session:
@@ -300,6 +304,8 @@ class Session:
             "updated_at_ms": self.updated_at_ms,
             "messages": [m.to_dict() for m in self.messages],
         }
+        if self.title:
+            d["title"] = self.title
         if self.compaction:
             d["compaction"] = {
                 "count": self.compaction.count,
@@ -342,6 +348,7 @@ class Session:
             messages=messages,
             compaction=compaction,
             fork=fork,
+            title=data.get("title"),
         )
         if path:
             session._persistence_path = path
@@ -349,17 +356,20 @@ class Session:
 
     @staticmethod
     def _rotate(path: Path) -> None:
-        """Rotate session files, keeping up to MAX_ROTATED_FILES."""
+        """Rotate session files, keeping up to MAX_ROTATED_FILES.
+
+        Uses os.replace, not Path.rename: on Windows (this project's platform) rename raises
+        FileExistsError when the destination exists, which the old code hit on the 3rd rotation and
+        which propagated out of save(), silently losing that snapshot. The oldest file is unlinked
+        first so the count is actually bounded (the previous prune branch was dead code).
+        """
+        oldest = path.with_suffix(f".{MAX_ROTATED_FILES}.jsonl")
+        if oldest.exists():
+            oldest.unlink()
         for i in range(MAX_ROTATED_FILES - 1, 0, -1):
             src = path.with_suffix(f".{i}.jsonl")
             dst = path.with_suffix(f".{i + 1}.jsonl")
             if src.exists():
-                if i + 1 > MAX_ROTATED_FILES:
-                    src.unlink()
-                else:
-                    src.rename(dst)
-
-        # Rotate current to .1
-        rotated = path.with_suffix(".1.jsonl")
+                os.replace(src, dst)
         if path.exists():
-            path.rename(rotated)
+            os.replace(path, path.with_suffix(".1.jsonl"))

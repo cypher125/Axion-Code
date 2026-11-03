@@ -70,3 +70,23 @@ def test_resolve_skill_legacy_commands_dir(tmp_path):
     (cmds_dir / "lint.md").write_text("Run linter")
     found = resolve_skill("lint", tmp_path)
     assert found is not None
+
+
+def test_skill_arg_substitution(tmp_path):
+    from axion.runtime.skills import execute_skill, load_skill
+    sk = tmp_path / "deploy.md"
+    sk.write_text("---\nname: deploy\ndescription: deploy X\n---\nDeploy $1 to {{args}} ($ARGUMENTS)", encoding="utf-8")
+    out = execute_skill(load_skill(sk), "prod fast now")
+    assert "Deploy prod to prod fast now (prod fast now)" == out
+
+
+def test_skill_resolve_and_list(tmp_path):
+    from axion.runtime.skills import list_skills, render_skills_for_prompt, resolve_skill
+    d = tmp_path / ".axion" / "skills"
+    d.mkdir(parents=True)
+    (d / "greet.md").write_text("---\nname: greet\ndescription: says hi\n---\nSay hello to $1.", encoding="utf-8")
+    assert resolve_skill("greet", tmp_path) is not None
+    names = [s.name for s in list_skills(tmp_path)]
+    assert "greet" in names
+    section = render_skills_for_prompt(tmp_path)
+    assert "greet" in section and "says hi" in section

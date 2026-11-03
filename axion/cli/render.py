@@ -7,14 +7,51 @@ from __future__ import annotations
 
 import enum
 import json
-from typing import Any
+import os
+import sys
+from typing import Any, Callable
 
 from rich.console import Console
-from rich.markdown import Markdown
+from rich.markdown import Heading, Markdown
 from rich.panel import Panel
 from rich.syntax import Syntax
 from rich.table import Table
+from rich.text import Text
 from rich.theme import Theme
+
+# ---------------------------------------------------------------------------
+# Compact Markdown (no full-width heading rules)
+# ---------------------------------------------------------------------------
+#
+# Rich's default Heading draws a horizontal Rule across the full terminal
+# width above H1 and below H2. In wide terminals (cmd.exe, tmux, etc.) those
+# rules become extremely long horizontal lines that visually overpower the
+# heading text itself. This subclass omits the rules and just bolds/colors
+# the heading inline.
+
+class CompactHeading(Heading):
+    """Heading without the full-width Rule that ships with Rich's default."""
+
+    def __rich_console__(self, console, options):  # type: ignore[override]
+        text = Text(self.text.plain, style="")
+        if self.tag == "h1":
+            text.stylize("bold #00d4aa")
+            yield text
+        elif self.tag == "h2":
+            text.stylize("bold #64ffda")
+            yield text
+        elif self.tag == "h3":
+            text.stylize("bold")
+            yield text
+        else:
+            text.stylize("italic")
+            yield text
+
+
+class CompactMarkdown(Markdown):
+    """Drop-in Markdown replacement that uses CompactHeading for H1/H2/H3."""
+
+    elements = {**Markdown.elements, "heading_open": CompactHeading}
 
 # ---------------------------------------------------------------------------
 # Constants (matching Rust render.rs)
@@ -67,29 +104,140 @@ CLAW_THEME = Theme({
 # Spinner (matching Rust 10-frame braille spinner)
 # ---------------------------------------------------------------------------
 
-class Spinner:
-    """Animated spinner using Rich (works cross-platform including Windows).
+def spinner_mode(console: Console) -> str:
+    """Whether to run the spinner: 'animate' on any real terminal, else 'off'.
 
-    Maps to: rust/crates/rusty-claude-cli/src/render.rs::Spinner
+    The spinner animates by redrawing one line with a carriage return (``\\r``) and never emits VT
+    escape codes, so it's safe on every terminal including legacy Windows cmd.exe (which leaked the
+    old Rich-Status ``ESC[K``). Off when output isn't a TTY or the user set AXION_NO_SPINNER.
     """
+    if os.environ.get("AXION_NO_SPINNER", "").strip().lower() in ("1", "true", "yes"):
+        return "off"
+    try:
+        return "animate" if console.is_terminal else "off"
+    except Exception:
+        return "off"
+
+
+_VT_ENABLED: bool | None = None
+
+
+def enable_windows_vt() -> bool:
+    """Turn on ANSI/VT processing for the Windows console so in-place rendering (Rich Live tables,
+    the typing region) works on cmd.exe / conhost instead of leaking ``[K``. No-op returning True
+    off Windows. Idempotent — call once at startup, before creating Live displays.
+    """
+    global _VT_ENABLED
+    if _VT_ENABLED is not None:
+        return _VT_ENABLED
+    if sys.platform != "win32":
+        _VT_ENABLED = True
+        return True
+    try:
+        import ctypes
+
+        kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+        enable_vt = 0x0004  # ENABLE_VIRTUAL_TERMINAL_PROCESSING
+        ok = False
+        for handle_id in (-11, -12):  # STD_OUTPUT_HANDLE, STD_ERROR_HANDLE
+            handle = kernel32.GetStdHandle(handle_id)
+            mode = ctypes.c_uint32()
+            if kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
+                if kernel32.SetConsoleMode(handle, mode.value | enable_vt):
+                    ok = True
+        _VT_ENABLED = ok
+    except Exception:
+        _VT_ENABLED = False
+    return _VT_ENABLED
+
+
+def rich_live_ok(console: Console) -> bool:
+    """Whether Rich ``Live`` (VT cursor control) renders cleanly here.
+
+    The per-token typing region and the agent dashboard rely on VT escapes. On Windows that needs
+    VT processing switched on (see enable_windows_vt); if we couldn't enable it, fall back to the
+    non-VT line modes. AXION_STREAM=lines / a legacy console also force the fallback.
+    """
+    if os.environ.get("AXION_STREAM", "").strip().lower() == "lines":
+        return False  # single kill-switch for all in-place VT rendering (typing + dashboard)
+    try:
+        if not console.is_terminal:
+            return False
+        if getattr(console, "legacy_windows", False):
+            return False
+        if sys.platform == "win32":
+            return bool(_VT_ENABLED) or bool(os.environ.get("WT_SESSION"))
+        return True
+    except Exception:
+        return False
+
+
+class Spinner:
+    """Animated progress indicator that works on every terminal and never leaks escape codes.
+
+    It runs a background thread that redraws a single line with a carriage return (``\\r``) — no VT
+    cursor/erase codes — so cmd.exe animates cleanly instead of frozen-looking or spewing ``[K``.
+    Maps to: render.rs::Spinner.
+    """
+
+    _FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 
     def __init__(self, console: Console | None = None) -> None:
         self._console = console or Console(stderr=True)
-        self._status: Any | None = None
         self._running = False
+        self._label = ""
+        self._thread: Any | None = None
+        self._stop_evt: Any | None = None
+
+    def _stream(self) -> Any:
+        # Write straight to the underlying stream so we bypass Rich's line control.
+        return getattr(self._console, "file", None) or sys.stdout
 
     def start(self, label: str = "Thinking...") -> None:
-        """Start the spinner animation using Rich Status."""
+        """Start the spinner (animated on a TTY, no-op otherwise)."""
         self._running = True
-        self._status = self._console.status(f"[cyan]{label}[/cyan]", spinner="dots")
-        self._status.start()
+        self._label = label
+        if spinner_mode(self._console) != "animate":
+            return
+        import threading
+
+        self._stop_evt = threading.Event()
+        self._thread = threading.Thread(target=self._spin, daemon=True)
+        self._thread.start()
+
+    def _spin(self) -> None:
+        import itertools
+        import time
+
+        stream = self._stream()
+        for frame in itertools.cycle(self._FRAMES):
+            if self._stop_evt is None or self._stop_evt.is_set():
+                break
+            try:
+                stream.write(f"\r{frame} {self._label} ")
+                stream.flush()
+            except Exception:
+                break
+            time.sleep(0.08)
+
+    def _clear_line(self) -> None:
+        try:
+            stream = self._stream()
+            stream.write("\r" + " " * (len(self._label) + 4) + "\r")
+            stream.flush()
+        except Exception:
+            pass
 
     def stop(self, final_label: str | None = None, success: bool = True) -> None:
-        """Stop the spinner and optionally show final status."""
+        """Stop the spinner, clear its line, and optionally show a final status."""
         self._running = False
-        if self._status:
-            self._status.stop()
-            self._status = None
+        if self._thread is not None:
+            if self._stop_evt is not None:
+                self._stop_evt.set()
+            self._thread.join(timeout=0.3)
+            self._thread = None
+            self._stop_evt = None
+            self._clear_line()
         if final_label:
             icon = "[green]✔[/green]" if success else "[red]✘[/red]"
             self._console.print(f"{icon} {final_label}")
@@ -144,6 +292,43 @@ class MarkdownStreamState:
         self._pending = ""
         return result
 
+    # -- Line-granular streaming (smooth output) --------------------------------------------
+    # The block-boundary methods above only reveal text at a blank line or a *closed* code
+    # fence, so on a slow model the cursor sits frozen through a long paragraph or code block
+    # and then the whole thing dumps at once. These stream each COMPLETED line the moment its
+    # newline arrives, which reads like Claude Code's live output. Prose lines are tagged "md"
+    # (render as Markdown, inline formatting kept); lines inside a ``` fence are tagged "raw"
+    # (print verbatim, preserving indentation) so code appears line by line as it's generated.
+
+    def _classify_line(self, line: str) -> tuple[str, str]:
+        stripped = line.strip()
+        if stripped.startswith("```") or stripped.startswith("~~~"):
+            self._in_code_fence = not self._in_code_fence
+            return ("raw", line)  # the fence delimiter itself
+        if self._in_code_fence:
+            return ("raw", line)
+        return ("md", line)
+
+    def push_stream(self, delta: str) -> list[tuple[str, str]]:
+        """Accumulate *delta* and return [(kind, text)] for every newly completed line.
+
+        Holds the incomplete trailing line until its newline arrives. kind is "md" or "raw".
+        """
+        self._pending += delta
+        out: list[tuple[str, str]] = []
+        while "\n" in self._pending:
+            line, self._pending = self._pending.split("\n", 1)
+            out.append(self._classify_line(line))
+        return out
+
+    def flush_stream(self) -> list[tuple[str, str]]:
+        """Return the trailing partial line (call at a tool boundary or end of turn)."""
+        if not self._pending.strip():
+            self._pending = ""
+            return []
+        line, self._pending = self._pending, ""
+        return [self._classify_line(line)]
+
     def _find_safe_boundary(self) -> int | None:
         """Find a safe point to split the pending text for rendering.
 
@@ -183,6 +368,99 @@ class MarkdownStreamState:
                     self._in_code_fence = not self._in_code_fence
 
         return last_safe
+
+
+class LiveStreamer:
+    """Per-token streaming, like Claude Code's live output.
+
+    Completed lines scroll up into the terminal history (rendered by ``emit_line``), while the
+    in-progress *trailing* line shows in a one-line Rich ``Live`` region that updates as tokens
+    arrive — so text visibly types out mid-line instead of only appearing when the line finishes.
+
+    The Live region only ever holds the single current line, so it never fights the terminal
+    height and handles arbitrarily long replies. If Rich ``Live`` can't run (not a TTY) or is
+    disabled with ``AXION_STREAM=lines``, it degrades cleanly to line-granular streaming: the
+    partial line just appears once its newline arrives.
+    """
+
+    def __init__(
+        self,
+        console: Console,
+        state: MarkdownStreamState,
+        emit_line: Callable[[str, str], None],
+    ) -> None:
+        self.console = console
+        self.state = state
+        self.emit_line = emit_line
+        self._live: Any | None = None
+        # Only run the in-place Live region where the terminal can animate cleanly (else its cursor
+        # / erase-line codes leak as ``[K`` on cmd.exe). Falls back to line-granular streaming, which
+        # uses plain prints and never leaks. AXION_STREAM=lines forces the fallback everywhere.
+        self._enabled = (
+            os.environ.get("AXION_STREAM", "live").strip().lower() != "lines"
+            and rich_live_ok(console)
+        )
+
+    def _ensure_live(self) -> None:
+        if self._live is not None or not self._enabled:
+            return
+        try:
+            from rich.live import Live
+
+            self._live = Live(
+                Text(""),
+                console=self.console,
+                refresh_per_second=15,
+                transient=True,
+                vertical_overflow="visible",
+            )
+            self._live.start()
+        except Exception:
+            self._live = None
+            self._enabled = False  # give up on Live for the rest of the session
+
+    def _set_partial(self, text: str) -> None:
+        if self._live is None:
+            return
+        try:
+            self._live.update(Text(text))
+        except Exception:
+            pass
+
+    def push(self, delta: str) -> None:
+        completed = self.state.push_stream(delta)
+        if completed and self._live is not None:
+            self._set_partial("")  # clear the stale partial before printing finished lines above it
+        for kind, line in completed:
+            try:
+                self.emit_line(kind, line)
+            except Exception:
+                pass
+        partial = self.state._pending
+        if partial:
+            self._ensure_live()
+            self._set_partial(partial)
+
+    def finish(self) -> bool:
+        """Stop the live region and render the trailing partial as a finished line.
+
+        Returns True if a trailing line was emitted. Resets fence state for the next message.
+        Safe to call repeatedly and from error paths.
+        """
+        if self._live is not None:
+            try:
+                self._live.stop()
+            except Exception:
+                pass
+            self._live = None
+        tail = self.state.flush_stream()
+        for kind, line in tail:
+            try:
+                self.emit_line(kind, line)
+            except Exception:
+                pass
+        self.state._in_code_fence = False
+        return bool(tail)
 
 
 # ---------------------------------------------------------------------------
@@ -323,7 +601,7 @@ class TerminalRenderer:
 
     def render_markdown(self, text: str) -> None:
         """Render markdown text to the terminal."""
-        md = Markdown(text, code_theme="monokai")
+        md = CompactMarkdown(text, code_theme="monokai")
         self.console.print(md)
 
     def render_code(self, code: str, language: str = "python") -> None:
@@ -413,7 +691,9 @@ class TerminalRenderer:
 
     def render_welcome(self, version: str, model: str) -> None:
         """Render the welcome banner."""
-        self.console.print(f"\n[bold]🐍 Axion Code[/bold] v{version}")
+        from axion.cli.brand import brand_name
+
+        self.console.print(f"\n[bold]🐍 {brand_name()}[/bold] v{version}")
         self.console.print(f"[dim]Model: {model}[/dim]")
         self.console.print("[dim]Type /help for commands, Ctrl+C to interrupt[/dim]\n")
 

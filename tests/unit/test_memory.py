@@ -63,3 +63,48 @@ def test_memory_update(tmp_path):
     assert loaded is not None
     assert loaded.description == "v2"
     assert "version 2" in loaded.content
+
+
+def test_add_render_and_index(tmp_path):
+    from axion.runtime.memory import MemoryStore
+    store = MemoryStore(memory_dir=tmp_path)
+    store.add(content="The user prefers concise, plain-language explanations.", type_hint=None) if False else store.add(
+        content="The user prefers concise, plain-language explanations."
+    )
+    store.add(content="Rex runs on a self-hosted Qwen model on Modal.")
+    rendered = store.render_for_prompt()
+    assert "# Persistent memory" in rendered
+    assert "concise" in rendered and "Modal" in rendered
+    # index is refreshed on save
+    idx = (tmp_path / "MEMORY.md").read_text(encoding="utf-8")
+    assert idx.count("- **") == 2
+
+
+def test_name_collision_disambiguated(tmp_path):
+    from axion.runtime.memory import MemoryEntry, MemoryStore, MemoryType
+    store = MemoryStore(memory_dir=tmp_path)
+    store.save(MemoryEntry(name="a b", description="d1", type=MemoryType.USER, content="one"))
+    store.save(MemoryEntry(name="a/b", description="d2", type=MemoryType.USER, content="two"))
+    # distinct names must not overwrite each other
+    assert len(store.load_all()) == 2
+
+
+def test_frontmatter_survives_multiline_description(tmp_path):
+    from axion.runtime.memory import MemoryEntry, MemoryStore, MemoryType
+    store = MemoryStore(memory_dir=tmp_path)
+    store.save(MemoryEntry(name="m", description="line1\nline2", type=MemoryType.USER, content="body"))
+    loaded = store.load("m")
+    assert loaded is not None and loaded.description == "line1 line2"
+
+
+def test_remember_tool_saves(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    import asyncio
+
+    from axion.tools.registry import BuiltinToolExecutor
+    ex = BuiltinToolExecutor(cwd=str(tmp_path))
+    out = asyncio.run(
+        ex.execute("Remember", '{"content": "User is a founder building Rex.", "type": "user"}')
+    )
+    assert "Saved to memory" in out

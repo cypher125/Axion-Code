@@ -88,6 +88,24 @@ class ProviderKind(enum.Enum):
     OPENAI_CODEX = "openai_codex"  # /v1/responses endpoint
     XAI = "xai"
     OLLAMA = "ollama"
+    CUSTOM = "custom"  # any OpenAI-compatible server via AXION_COMPAT_* env vars
+
+
+DEFAULT_CUSTOM_MODELS = ("rex",)
+DEFAULT_CUSTOM_MAX_TOKENS = 4096
+
+
+def custom_models() -> tuple[str, ...]:
+    """Model names served by the custom OpenAI-compatible endpoint (AXION_COMPAT_MODELS)."""
+    import os
+
+    raw = os.environ.get("AXION_COMPAT_MODELS", "")
+    names = tuple(n.strip() for n in raw.split(",") if n.strip())
+    return names or DEFAULT_CUSTOM_MODELS
+
+
+def is_custom_model(model: str) -> bool:
+    return model.strip().lower() in {m.lower() for m in custom_models()}
 
 
 def _is_codex_model(resolved: str) -> bool:
@@ -122,6 +140,10 @@ def resolve_model_alias(model: str | None) -> str:
 def detect_provider_kind(model: str) -> ProviderKind:
     """Detect the provider from a model name."""
     resolved = resolve_model_alias(model)
+    # Custom endpoint models are matched by exact name first so a server can serve
+    # anything (including names that look like other providers').
+    if is_custom_model(resolved):
+        return ProviderKind.CUSTOM
     if resolved.startswith("claude-"):
         return ProviderKind.ANTHROPIC
     if resolved.startswith("grok-"):
@@ -150,6 +172,13 @@ DEFAULT_MAX_TOKENS = 16_000
 def max_tokens_for_model(model: str) -> int:
     """Get the max output tokens for a model."""
     resolved = resolve_model_alias(model)
+    if is_custom_model(resolved):
+        import os
+
+        try:
+            return int(os.environ.get("AXION_COMPAT_MAX_TOKENS", "") or DEFAULT_CUSTOM_MAX_TOKENS)
+        except ValueError:
+            return DEFAULT_CUSTOM_MAX_TOKENS
     return MAX_TOKENS_FOR_MODEL.get(resolved, DEFAULT_MAX_TOKENS)
 
 
@@ -189,6 +218,10 @@ class ProviderClient:
             else:
                 client = AnthropicClient.from_env()
             return cls(kind=kind, anthropic=client)
+
+        if kind == ProviderKind.CUSTOM:
+            client = OpenAiCompatClient.from_env(OpenAiCompatConfig.custom())
+            return cls(kind=kind, openai_compat=client)
 
         if kind == ProviderKind.XAI:
             client = OpenAiCompatClient.from_env(OpenAiCompatConfig.xai())

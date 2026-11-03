@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 PLAN_MODE_ALLOWED_TOOLS = {
     "Read", "Glob", "Grep", "WebSearch", "WebFetch",
     "ToolSearch", "Agent",  # Agent can explore
+    "ExitPlanMode",  # how the model presents its plan for approval
 }
 
 # Tools blocked in plan mode
@@ -54,9 +55,9 @@ Anything that could go wrong or needs careful handling.
 How to test that the implementation works.
 
 ## When you're done exploring and have a plan:
-End your response with: **"Ready to implement. Type /plan execute to proceed."**
-
-The user will review your plan and either approve it or ask for changes.
+Call the **ExitPlanMode** tool with your full plan (as `plan`). It presents the plan to the user for
+approval. If they approve, plan mode turns off and you should implement the plan immediately. If they
+reject, revise based on their feedback. Do not write files or run state-changing commands until approved.
 """
 
 

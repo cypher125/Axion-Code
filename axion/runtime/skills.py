@@ -17,11 +17,11 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# Directories searched (relative to cwd) when resolving a skill by name.
+# Directories searched (relative to cwd) when resolving a skill by name. Also checked under the
+# user's home so global skills work anywhere.
 _SKILL_SEARCH_DIRS: list[str] = [
     ".axion/skills", ".claude/skills",
     ".axion/commands", ".claude/commands",
-    ".axion/skills",
 ]
 
 
@@ -93,32 +93,62 @@ def load_skill(path: Path) -> SkillDefinition:
     )
 
 
+def _skill_dirs(cwd: Path) -> list[Path]:
+    dirs = [cwd / d for d in _SKILL_SEARCH_DIRS]
+    dirs += [Path.home() / ".axion" / "skills", Path.home() / ".claude" / "skills"]
+    return dirs
+
+
 def resolve_skill(name: str, cwd: Path) -> Path | None:
-    """Search conventional directories for a skill file matching *name*.
-
-    Searches .claude/skills/, .claude/commands/, .axion/skills/ under *cwd*.
-    Returns the first matching .md file, or ``None``.
-    """
-    for search_dir in _SKILL_SEARCH_DIRS:
-        base = cwd / search_dir
-
-        # Try exact name with .md extension
+    """Find a skill file matching *name* in the project and home skill dirs (or None)."""
+    for base in _skill_dirs(cwd):
         candidate = base / f"{name}.md"
         if candidate.is_file():
             return candidate
-
-        # Try name as-is (may already include extension)
         candidate = base / name
         if candidate.is_file():
             return candidate
-
     return None
 
 
-def execute_skill(skill: SkillDefinition, user_args: str) -> str:
-    """Execute a skill by replacing ``{{args}}`` with *user_args*.
+def list_skills(cwd: Path) -> list[SkillDefinition]:
+    """Load every skill found in the project and home skill directories (deduped by name)."""
+    out: dict[str, SkillDefinition] = {}
+    for base in _skill_dirs(cwd):
+        if not base.is_dir():
+            continue
+        for f in sorted(base.glob("*.md")):
+            try:
+                skill = load_skill(f)
+            except OSError:
+                continue
+            out.setdefault(skill.name, skill)
+    return list(out.values())
 
-    Returns the skill content with placeholders substituted.
-    """
-    result = skill.content.replace("{{args}}", user_args)
+
+def render_skills_for_prompt(cwd: Path, max_chars: int = 1500) -> str:
+    """A system-prompt section listing available skills, so the model knows it can invoke them."""
+    skills = list_skills(cwd)
+    if not skills:
+        return ""
+    lines = [
+        "# Skills",
+        "",
+        "Reusable procedures available via the Skill tool (or as /<name> slash commands). Invoke one "
+        "with the Skill tool when its description matches the task:",
+        "",
+    ]
+    for s in skills:
+        lines.append(f"- {s.name}: {s.description}" if s.description else f"- {s.name}")
+    text = "\n".join(lines)
+    return text[:max_chars] + ("\n..." if len(text) > max_chars else "")
+
+
+def execute_skill(skill: SkillDefinition, user_args: str) -> str:
+    """Expand a skill's body: substitute {{args}}, $ARGUMENTS, and positional $1..$9 from user_args."""
+    result = skill.content
+    result = result.replace("{{args}}", user_args).replace("$ARGUMENTS", user_args)
+    parts = user_args.split()
+    for i in range(9, 0, -1):  # $9 down to $1 so $10 isn't clobbered by $1
+        result = result.replace(f"${i}", parts[i - 1] if i - 1 < len(parts) else "")
     return result

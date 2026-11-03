@@ -44,6 +44,7 @@ SLASH_COMMAND_SPECS: list[SlashCommandSpec] = [
     SlashCommandSpec(name="quit", aliases=["exit", "q"], summary="Exit the REPL", category="core"),
     SlashCommandSpec(name="clear", summary="Clear conversation history", category="core"),
     SlashCommandSpec(name="compact", summary="Compact session history to reduce tokens", category="core"),
+    SlashCommandSpec(name="rewind", summary="Rewind the conversation N turns to retry from a good point", argument_hint="[N]", category="core"),
     SlashCommandSpec(name="cost", summary="Show token usage and costs", category="core"),
     SlashCommandSpec(name="status", summary="Show session status", category="core"),
 
@@ -51,6 +52,7 @@ SLASH_COMMAND_SPECS: list[SlashCommandSpec] = [
     SlashCommandSpec(name="model", summary="Show or switch AI model", argument_hint="[opus|sonnet|haiku|gpt-4o|grok-2|llama3.1]", category="model"),
     SlashCommandSpec(name="models", summary="List available Ollama models", category="model"),
     SlashCommandSpec(name="permissions", summary="Show or change permission mode", argument_hint="[allow|prompt|read-only]", category="model"),
+    SlashCommandSpec(name="persona", aliases=["identity"], summary="Switch the agent's identity/persona live (e.g. normal / dark)", argument_hint="[name]", category="model"),
 
     # -- Session --
     SlashCommandSpec(name="session", summary="Manage sessions (list/switch/new/fork/delete)", argument_hint="[list|switch|new|fork|delete]", category="session"),
@@ -147,13 +149,19 @@ class CommandRegistry:
     def categories(self) -> list[str]:
         return sorted(self._by_category.keys())
 
+    def _register_dynamic(self, spec: SlashCommandSpec) -> None:
+        """Register a plugin/skill command into both lookups so it shows in /help and completion."""
+        if spec.name in self._commands:
+            return  # don't duplicate a name already registered
+        self._commands[spec.name] = spec
+        self._by_category.setdefault(spec.category, []).append(spec)
+
     def register_plugin_command(self, name: str, summary: str = "") -> None:
-        spec = SlashCommandSpec(name=name, summary=summary, source="plugin", category="plugin")
-        self._commands[name] = spec
+        self._register_dynamic(SlashCommandSpec(name=name, summary=summary, source="plugin", category="plugin"))
 
     def register_skill_command(self, name: str, summary: str = "") -> None:
-        spec = SlashCommandSpec(name=name, summary=summary, source="skill", category="skill")
-        self._commands[name] = spec
+        self._register_dynamic(SlashCommandSpec(
+            name=name, summary=summary, source="skill", category="skill", argument_hint="[args]"))
 
 
 _registry: CommandRegistry | None = None

@@ -72,7 +72,9 @@ class PermissionOverride(enum.Enum):
 # ---------------------------------------------------------------------------
 
 class PermissionPromptDecision(enum.Enum):
-    ALLOW = "allow"
+    ALLOW = "allow"  # legacy alias, treated as allow-once
+    ALLOW_ONCE = "allow_once"  # allow this call only; do not cache
+    ALLOW_ALWAYS = "allow_always"  # allow and remember for the session
     DENY = "deny"
 
 
@@ -92,6 +94,7 @@ TOOL_PERMISSION_REQUIREMENTS: dict[str, PermissionMode] = {
     "Bash": PermissionMode.WORKSPACE_WRITE,
     "Write": PermissionMode.WORKSPACE_WRITE,
     "Edit": PermissionMode.WORKSPACE_WRITE,
+    "MultiEdit": PermissionMode.WORKSPACE_WRITE,
     "NotebookEdit": PermissionMode.WORKSPACE_WRITE,
     "Read": PermissionMode.READ_ONLY,
     "Glob": PermissionMode.READ_ONLY,
@@ -100,6 +103,10 @@ TOOL_PERMISSION_REQUIREMENTS: dict[str, PermissionMode] = {
     "WebFetch": PermissionMode.READ_ONLY,
     "Agent": PermissionMode.READ_ONLY,
     "TodoWrite": PermissionMode.READ_ONLY,
+    "Remember": PermissionMode.READ_ONLY,
+    "BashOutput": PermissionMode.READ_ONLY,
+    "ExitPlanMode": PermissionMode.READ_ONLY,
+    "Skill": PermissionMode.READ_ONLY,
 }
 
 
@@ -145,6 +152,10 @@ class PermissionPolicy:
         key = f"{tool_name}:{self.mode.value}"
         self._decision_cache[key] = outcome
 
+    def cached_decision(self, tool_name: str) -> PermissionOutcome | None:
+        """The remembered ('allow always') decision for this tool under the current mode, if any."""
+        return self._decision_cache.get(f"{tool_name}:{self.mode.value}")
+
     def persist_decisions(self, path: Path) -> None:
         """Save cached decisions to a JSON file."""
         serializable: dict[str, dict[str, str]] = {}
@@ -186,19 +197,23 @@ class PermissionPolicy:
         prompter: PermissionPrompter | None = None,
     ) -> PermissionOutcome:
         """Check if a tool invocation is allowed under current policy."""
+        # The specifier is the meaningful part of the tool input (Bash command, file path, URL) that
+        # command/path-scoped rules like "Bash(git *)" or "Edit(src/*)" match against.
+        specifier = self._extract_specifier(tool_name, input_json)
+
         # Check decision cache first
         cache_key = f"{tool_name}:{self.mode.value}"
         if cache_key in self._decision_cache:
             return self._decision_cache[cache_key]
 
-        # Explicit deny rules
+        # Explicit deny rules (checked first so a deny always wins)
         for rule in self.deny_rules:
-            if self._matches_rule(rule, tool_name):
+            if self._matches_rule(rule, tool_name, specifier):
                 return PermissionDeny(reason=f"Denied by rule: {rule}")
 
         # Explicit allow rules
         for rule in self.allow_rules:
-            if self._matches_rule(rule, tool_name):
+            if self._matches_rule(rule, tool_name, specifier):
                 return PermissionAllow()
 
         # Mode-based check
@@ -236,12 +251,46 @@ class PermissionPolicy:
         return PermissionAllow()
 
     @staticmethod
-    def _matches_rule(rule: str, tool_name: str) -> bool:
-        """Check if a rule pattern matches a tool name."""
-        if rule == "*":
+    def _extract_specifier(tool_name: str, input_json: str) -> str:
+        """The part of a tool's input that scoped rules match on (command, path, URL, ...)."""
+        if not input_json:
+            return ""
+        try:
+            data = json.loads(input_json)
+        except (json.JSONDecodeError, TypeError):
+            return ""
+        if not isinstance(data, dict):
+            return ""
+        if tool_name == "Bash":
+            return str(data.get("command", ""))
+        if tool_name in ("Read", "Write", "Edit", "MultiEdit", "NotebookEdit"):
+            return str(data.get("file_path") or data.get("notebook_path") or "")
+        if tool_name == "Grep":
+            return str(data.get("pattern", ""))
+        if tool_name == "WebFetch":
+            return str(data.get("url", ""))
+        return ""
+
+    @staticmethod
+    def _matches_tool_name(rule: str, tool_name: str) -> bool:
+        if rule == "*" or rule == tool_name:
             return True
-        if rule == tool_name:
-            return True
-        if rule.endswith("*") and tool_name.startswith(rule[:-1]):
-            return True
-        return False
+        return rule.endswith("*") and tool_name.startswith(rule[:-1])
+
+    @staticmethod
+    def _matches_rule(rule: str, tool_name: str, specifier: str = "") -> bool:
+        """Match a rule against a tool call.
+
+        Plain rules match the tool name: "*", "Bash", "Web*".
+        Scoped rules match the tool name AND a glob against the specifier: "Bash(git *)",
+        "Bash(rm *)", "Edit(src/*)", "WebFetch(https://api.example.com/*)".
+        """
+        import fnmatch
+
+        if "(" in rule and rule.endswith(")"):
+            tool_part, _, pattern = rule[:-1].partition("(")
+            if not PermissionPolicy._matches_tool_name(tool_part.strip(), tool_name):
+                return False
+            pattern = pattern.strip()
+            return fnmatch.fnmatch(specifier, pattern) if pattern else True
+        return PermissionPolicy._matches_tool_name(rule, tool_name)
